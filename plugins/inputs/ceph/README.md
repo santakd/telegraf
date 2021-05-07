@@ -12,7 +12,7 @@ a MON socket, it runs **ceph --admin-daemon $file perfcounters_dump**. For OSDs 
 The resulting JSON is parsed and grouped into collections, based on top-level key.  Top-level keys are
 used as collection tags, and all sub-keys are flattened. For example:
 
-```
+```json
  {
    "paxos": {
      "refresh": 9363435,
@@ -44,8 +44,8 @@ the cluster.  The currently supported commands are:
 
 ### Configuration:
 
-```
-# Collects performance metrics from the MON and OSD nodes in a Ceph storage cluster.
+```toml
+# Collects performance metrics from the MON, OSD, MDS and RGW nodes in a Ceph storage cluster.
 [[inputs.ceph]]
   ## This is the recommended interval to poll.  Too frequent and you will lose
   ## data points due to timeouts during rebalancing and recovery

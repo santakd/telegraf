@@ -6,13 +6,15 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func getTestCasesForRFC5426() []testCasePacket {
@@ -235,14 +237,10 @@ func testRFC5426(t *testing.T, protocol string, address string, bestEffort bool)
 			require.NoError(t, receiver.Start(acc))
 			defer receiver.Stop()
 
-			// Clear
-			acc.ClearMetrics()
-			acc.Errors = make([]error, 0)
-
 			// Connect
 			conn, err := net.Dial(protocol, address)
 			require.NotNil(t, conn)
-			require.Nil(t, err)
+			require.NoError(t, err)
 
 			// Write
 			_, err = conn.Write(tc.data)
@@ -288,20 +286,30 @@ func TestStrict_udp(t *testing.T) {
 }
 
 func TestBestEffort_unixgram(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows, as unixgram sockets are not supported")
+	}
+
 	tmpdir, err := ioutil.TempDir("", "telegraf")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 	sock := filepath.Join(tmpdir, "syslog.TestBestEffort_unixgram.sock")
-	os.Create(sock)
+	_, err = os.Create(sock)
+	require.NoError(t, err)
 	testRFC5426(t, "unixgram", sock, true)
 }
 
 func TestStrict_unixgram(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping on Windows, as unixgram sockets are not supported")
+	}
+
 	tmpdir, err := ioutil.TempDir("", "telegraf")
 	require.NoError(t, err)
 	defer os.RemoveAll(tmpdir)
 	sock := filepath.Join(tmpdir, "syslog.TestStrict_unixgram.sock")
-	os.Create(sock)
+	_, err = os.Create(sock)
+	require.NoError(t, err)
 	testRFC5426(t, "unixgram", sock, false)
 }
 
@@ -330,7 +338,7 @@ func TestTimeIncrement_udp(t *testing.T) {
 	conn, err := net.Dial("udp", address)
 	require.NotNil(t, conn)
 	defer conn.Close()
-	require.Nil(t, err)
+	require.NoError(t, err)
 
 	// Write
 	_, e := conn.Write([]byte("<1>1 - - - - - -"))

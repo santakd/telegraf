@@ -19,7 +19,7 @@ For example, to disable collection of VMs, add this:
 vm_metric_exclude = [ "*" ]
 ```
 
-```
+```toml
 # Read metrics from one or many vCenters
 [[inputs.vsphere]]
     ## List of vCenter URLs to be monitored. These three lines must be uncommented
@@ -181,6 +181,12 @@ vm_metric_exclude = [ "*" ]
   ## preserve the full precision when averaging takes place.
   # use_int_samples = true
 
+  ## The number of vSphere 5 minute metric collection cycles to look back for non-realtime metrics. In 
+  ## some versions (6.7, 7.0 and possible more), certain metrics, such as cluster metrics, may be reported
+  ## with a significant delay (>30min). If this happens, try increasing this number. Please note that increasing
+  ## it too much may cause performance issues.
+  # metric_lookback = 3
+
   ## Custom attributes from vCenter can be very useful for queries in order to slice the
   ## metrics along different dimension and for forming ad-hoc relationships. They are disabled
   ## by default, since they can add a considerable amount of tags to the resulting metrics. To
@@ -286,7 +292,7 @@ This distinction has an impact on how Telegraf collects metrics. A single instan
 
 This will disrupt the metric collection and can result in missed samples. The best practice workaround is to specify two instances of the vSphere plugin, one for the realtime metrics with a short collection interval and one for the historical metrics with a longer interval. You can use the ```*_metric_exclude``` to turn off the resources you don't want to collect metrics for in each instance. For example:
 
-```
+```toml
 ## Realtime instance
 [[inputs.vsphere]]
   interval = "60s"

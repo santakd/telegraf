@@ -9,8 +9,6 @@ import (
 	"github.com/influxdata/telegraf/internal"
 )
 
-type empty struct{}
-
 type Ticker interface {
 	Elapsed() <-chan time.Time
 	Stop()
@@ -31,11 +29,12 @@ type Ticker interface {
 // no maximum sleep, when using large intervals alignment is not corrected
 // until the next tick.
 type AlignedTicker struct {
-	interval time.Duration
-	jitter   time.Duration
-	ch       chan time.Time
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
+	interval    time.Duration
+	jitter      time.Duration
+	minInterval time.Duration
+	ch          chan time.Time
+	cancel      context.CancelFunc
+	wg          sync.WaitGroup
 }
 
 func NewAlignedTicker(now time.Time, interval, jitter time.Duration) *AlignedTicker {
@@ -45,10 +44,11 @@ func NewAlignedTicker(now time.Time, interval, jitter time.Duration) *AlignedTic
 func newAlignedTicker(now time.Time, interval, jitter time.Duration, clock clock.Clock) *AlignedTicker {
 	ctx, cancel := context.WithCancel(context.Background())
 	t := &AlignedTicker{
-		interval: interval,
-		jitter:   jitter,
-		ch:       make(chan time.Time, 1),
-		cancel:   cancel,
+		interval:    interval,
+		jitter:      jitter,
+		minInterval: interval / 100,
+		ch:          make(chan time.Time, 1),
+		cancel:      cancel,
 	}
 
 	d := t.next(now)
@@ -64,7 +64,12 @@ func newAlignedTicker(now time.Time, interval, jitter time.Duration, clock clock
 }
 
 func (t *AlignedTicker) next(now time.Time) time.Duration {
-	next := internal.AlignTime(now, t.interval)
+	// Add minimum interval size to avoid scheduling an interval that is
+	// exceptionally short.  This avoids an issue that can occur where the
+	// previous interval ends slightly early due to very minor clock changes.
+	next := now.Add(t.minInterval)
+
+	next = internal.AlignTime(next, t.interval)
 	d := next.Sub(now)
 	if d == 0 {
 		d = t.interval
@@ -209,6 +214,7 @@ type RollingTicker struct {
 	ch       chan time.Time
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
+	timer    *clock.Timer
 }
 
 func NewRollingTicker(interval, jitter time.Duration) *RollingTicker {
@@ -225,12 +231,12 @@ func newRollingTicker(interval, jitter time.Duration, clock clock.Clock) *Rollin
 	}
 
 	d := t.next()
-	timer := clock.Timer(d)
+	t.timer = clock.Timer(d)
 
 	t.wg.Add(1)
 	go func() {
 		defer t.wg.Done()
-		t.run(ctx, timer)
+		t.run(ctx)
 	}()
 
 	return t
@@ -240,22 +246,26 @@ func (t *RollingTicker) next() time.Duration {
 	return t.interval + internal.RandomDuration(t.jitter)
 }
 
-func (t *RollingTicker) run(ctx context.Context, timer *clock.Timer) {
+func (t *RollingTicker) run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			timer.Stop()
+			t.timer.Stop()
 			return
-		case now := <-timer.C:
+		case now := <-t.timer.C:
 			select {
 			case t.ch <- now:
 			default:
 			}
 
-			d := t.next()
-			timer.Reset(d)
+			t.Reset()
 		}
 	}
+}
+
+// Reset the ticker to the next interval + jitter.
+func (t *RollingTicker) Reset() {
+	t.timer.Reset(t.next())
 }
 
 func (t *RollingTicker) Elapsed() <-chan time.Time {

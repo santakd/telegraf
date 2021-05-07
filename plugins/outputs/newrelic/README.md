@@ -1,8 +1,10 @@
-#New Relic output plugin
+# New Relic output plugin
 
 This plugins writes to New Relic Insights using the [Metrics API][].
 
 To use this plugin you must first obtain an [Insights API Key][].
+
+Telegraf minimum version: Telegraf 1.15.0
 
 ### Configuration
 ```toml
@@ -15,6 +17,10 @@ To use this plugin you must first obtain an [Insights API Key][].
 
   ## Timeout for writes to the New Relic API.
   # timeout = "15s"
+  
+  ## HTTP Proxy override. If unset use values from the standard
+  ## proxy environment variables to determine proxy, if any.
+  # http_proxy = "http://corporate.proxy:3128"
 ```
 
 [Metrics API]: https://docs.newrelic.com/docs/data-ingest-apis/get-data-new-relic/metric-api/introduction-metric-api

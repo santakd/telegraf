@@ -400,7 +400,7 @@ func TestParseEpochDecimal(t *testing.T) {
 
 			if tt.noMatch {
 				require.Nil(t, m)
-				require.Nil(t, err)
+				require.NoError(t, err)
 				return
 			}
 
@@ -1013,7 +1013,6 @@ func TestSyslogTimestamp(t *testing.T) {
 }
 
 func TestReplaceTimestampComma(t *testing.T) {
-
 	p := &Parser{
 		Patterns: []string{`%{TIMESTAMP_ISO8601:timestamp:ts-"2006-01-02 15:04:05.000"} successfulMatches=%{NUMBER:value:int}`},
 	}

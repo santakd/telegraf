@@ -1,4 +1,4 @@
-# `nvidia-smi` Input Plugin
+# Nvidia System Management Interface (SMI) Input Plugin
 
 This plugin uses a query on the [`nvidia-smi`](https://developer.nvidia.com/nvidia-system-management-interface) binary to pull GPU stats including memory and GPU usage, temp and other.
 
@@ -31,6 +31,9 @@ You'll need to escape the `\` within the `telegraf.conf` like this: `C:\\Program
     - `uuid` (A unique identifier for the GPU e.g. `GPU-f9ba66fc-a7f5-94c5-da19-019ef2f9c665`)
   - fields
     - `fan_speed` (integer, percentage)
+    - `fbc_stats_session_count` (integer)
+    - `fbc_stats_average_fps` (integer)
+    - `fbc_stats_average_latency` (integer)
     - `memory_free` (integer, MiB)
     - `memory_used` (integer, MiB)
     - `memory_total` (integer, MiB)
@@ -38,6 +41,8 @@ You'll need to escape the `\` within the `telegraf.conf` like this: `C:\\Program
     - `temperature_gpu` (integer, degrees C)
     - `utilization_gpu` (integer, percentage)
     - `utilization_memory` (integer, percentage)
+    - `utilization_encoder` (integer, percentage)
+    - `utilization_decoder` (integer, percentage)
     - `pcie_link_gen_current` (integer)
     - `pcie_link_width_current` (integer)
     - `encoder_stats_session_count` (integer)
@@ -47,12 +52,14 @@ You'll need to escape the `\` within the `telegraf.conf` like this: `C:\\Program
     - `clocks_current_sm` (integer, MHz)
     - `clocks_current_memory` (integer, MHz)
     - `clocks_current_video` (integer, MHz)
+    - `driver_version` (string)
+    - `cuda_version` (string)
 
 ### Sample Query
 
 The below query could be used to alert on the average temperature of the your GPUs over the last minute
 
-```
+```sql
 SELECT mean("temperature_gpu") FROM "nvidia_smi" WHERE time > now() - 5m GROUP BY time(1m), "index", "name", "host"
 ```
 
@@ -61,7 +68,7 @@ SELECT mean("temperature_gpu") FROM "nvidia_smi" WHERE time > now() - 5m GROUP B
 Check the full output by running `nvidia-smi` binary manually.
 
 Linux:
-```
+```sh
 sudo -u telegraf -- /usr/bin/nvidia-smi -q -x
 ```
 
@@ -82,3 +89,5 @@ nvidia_smi,compute_mode=Default,host=8218cf,index=2,name=GeForce\ GTX\ 1080,psta
 ### Limitations
 Note that there seems to be an issue with getting current memory clock values when the memory is overclocked.
 This may or may not apply to everyone but it's confirmed to be an issue on an EVGA 2080 Ti.
+
+**NOTE:** For use with docker either generate your own custom docker image based on nvidia/cuda which also installs a telegraf package or use [volume mount binding](https://docs.docker.com/storage/bind-mounts/) to inject the required binary into the docker container.
