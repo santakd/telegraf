@@ -323,7 +323,7 @@ func (p *Parser) expandArray(result MetricNode) ([]MetricNode, error) {
 				if result.Tag {
 					result.DesiredType = "string"
 				}
-				v, err := p.convertType(result.Value(), result.DesiredType, result.SetName)
+				v, err := p.convertType(result.Result, result.DesiredType, result.SetName)
 				if err != nil {
 					return nil, err
 				}
@@ -381,6 +381,7 @@ func (p *Parser) processObjects(objects []JSONObject, input []byte) ([]telegraf.
 // If the object has multiple array's as elements it won't comine those, they will remain separate metrics
 func (p *Parser) combineObject(result MetricNode) ([]MetricNode, error) {
 	var results []MetricNode
+	var combineObjectResult []MetricNode
 	if result.IsArray() || result.IsObject() {
 		var err error
 		var prevArray bool
@@ -437,7 +438,7 @@ func (p *Parser) combineObject(result MetricNode) ([]MetricNode, error) {
 			arrayNode.Tag = tag
 			if val.IsObject() {
 				prevArray = false
-				_, err = p.combineObject(arrayNode)
+				combineObjectResult, err = p.combineObject(arrayNode)
 				if err != nil {
 					return false
 				}
@@ -475,6 +476,12 @@ func (p *Parser) combineObject(result MetricNode) ([]MetricNode, error) {
 		if err != nil {
 			return nil, err
 		}
+	}
+
+	if len(results) == 0 {
+		// If the results are empty, use the results of the call to combine object
+		// This happens with nested objects in array's, see the test array_of_objects
+		results = combineObjectResult
 	}
 
 	return results, nil
@@ -518,8 +525,8 @@ func (p *Parser) SetDefaultTags(tags map[string]string) {
 }
 
 // convertType will convert the value parsed from the input JSON to the specified type in the config
-func (p *Parser) convertType(input interface{}, desiredType string, name string) (interface{}, error) {
-	switch inputType := input.(type) {
+func (p *Parser) convertType(input gjson.Result, desiredType string, name string) (interface{}, error) {
+	switch inputType := input.Value().(type) {
 	case string:
 		if desiredType != "string" {
 			switch desiredType {
@@ -530,7 +537,7 @@ func (p *Parser) convertType(input interface{}, desiredType string, name string)
 				}
 				return r, nil
 			case "int":
-				r, err := strconv.Atoi(inputType)
+				r, err := strconv.ParseInt(inputType, 10, 64)
 				if err != nil {
 					return nil, fmt.Errorf("Unable to convert field '%s' to type int: %v", name, err)
 				}
@@ -572,9 +579,9 @@ func (p *Parser) convertType(input interface{}, desiredType string, name string)
 			case "string":
 				return fmt.Sprint(inputType), nil
 			case "int":
-				return int64(inputType), nil
+				return input.Int(), nil
 			case "uint":
-				return uint64(inputType), nil
+				return input.Uint(), nil
 			case "bool":
 				if inputType == 0 {
 					return false, nil
@@ -589,5 +596,5 @@ func (p *Parser) convertType(input interface{}, desiredType string, name string)
 		return nil, fmt.Errorf("unknown format '%T' for field  '%s'", inputType, name)
 	}
 
-	return input, nil
+	return input.Value(), nil
 }
