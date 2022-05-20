@@ -22,24 +22,6 @@ type ROCmSMI struct {
 	Timeout config.Duration
 }
 
-// Description returns the description of the ROCmSMI plugin
-func (rsmi *ROCmSMI) Description() string {
-	return "Query statistics from AMD Graphics cards using rocm-smi binary"
-}
-
-var ROCmSMIConfig = `
-## Optional: path to rocm-smi binary, defaults to $PATH via exec.LookPath
-# bin_path = "/opt/rocm/bin/rocm-smi"
-
-## Optional: timeout for GPU polling
-# timeout = "5s"
-`
-
-// SampleConfig returns the sample configuration for the ROCmSMI plugin
-func (rsmi *ROCmSMI) SampleConfig() string {
-	return ROCmSMIConfig
-}
-
 // Gather implements the telegraf interface
 func (rsmi *ROCmSMI) Gather(acc telegraf.Accumulator) error {
 	if _, err := os.Stat(rsmi.BinPath); os.IsNotExist(err) {
@@ -159,7 +141,7 @@ func genTagsFields(gpus map[string]GPU, system map[string]sysInfo) []metric {
 			setTagIfUsed(tags, "gpu_id", payload.GpuID)
 			setTagIfUsed(tags, "gpu_unique_id", payload.GpuUniqueID)
 
-			setIfUsed("int", fields, "driver_version", strings.Replace(system["system"].DriverVersion, ".", "", -1))
+			setIfUsed("int", fields, "driver_version", strings.ReplaceAll(system["system"].DriverVersion, ".", ""))
 			setIfUsed("int", fields, "fan_speed", payload.GpuFanSpeedPercentage)
 			setIfUsed("int64", fields, "memory_total", payload.GpuVRAMTotalMemory)
 			setIfUsed("int64", fields, "memory_used", payload.GpuVRAMTotalUsedMemory)

@@ -27,35 +27,6 @@ type Apache struct {
 	client *http.Client
 }
 
-var sampleConfig = `
-  ## An array of URLs to gather from, must be directed at the machine
-  ## readable version of the mod_status page including the auto query string.
-  ## Default is "http://localhost/server-status?auto".
-  urls = ["http://localhost/server-status?auto"]
-
-  ## Credentials for basic HTTP authentication.
-  # username = "myuser"
-  # password = "mypassword"
-
-  ## Maximum time to receive response.
-  # response_timeout = "5s"
-
-  ## Optional TLS Config
-  # tls_ca = "/etc/telegraf/ca.pem"
-  # tls_cert = "/etc/telegraf/cert.pem"
-  # tls_key = "/etc/telegraf/key.pem"
-  ## Use TLS but skip chain & host verification
-  # insecure_skip_verify = false
-`
-
-func (n *Apache) SampleConfig() string {
-	return sampleConfig
-}
-
-func (n *Apache) Description() string {
-	return "Read Apache status information (mod_status)"
-}
-
 func (n *Apache) Gather(acc telegraf.Accumulator) error {
 	var wg sync.WaitGroup
 
@@ -136,7 +107,7 @@ func (n *Apache) gatherURL(addr *url.URL, acc telegraf.Accumulator) error {
 		line := sc.Text()
 		if strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)
-			key, part := strings.Replace(parts[0], " ", "", -1), strings.TrimSpace(parts[1])
+			key, part := strings.ReplaceAll(parts[0], " ", ""), strings.TrimSpace(parts[1])
 
 			switch key {
 			case "Scoreboard":

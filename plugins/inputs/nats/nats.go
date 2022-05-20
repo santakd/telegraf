@@ -11,10 +11,11 @@ import (
 	"path"
 	"time"
 
+	gnatsd "github.com/nats-io/nats-server/v2/server"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	gnatsd "github.com/nats-io/nats-server/v2/server"
 )
 
 type Nats struct {
@@ -24,33 +25,17 @@ type Nats struct {
 	client *http.Client
 }
 
-var sampleConfig = `
-  ## The address of the monitoring endpoint of the NATS server
-  server = "http://localhost:8222"
-
-  ## Maximum time to receive response
-  # response_timeout = "5s"
-`
-
-func (n *Nats) SampleConfig() string {
-	return sampleConfig
-}
-
-func (n *Nats) Description() string {
-	return "Provides metrics about the state of a NATS server"
-}
-
 func (n *Nats) Gather(acc telegraf.Accumulator) error {
-	url, err := url.Parse(n.Server)
+	address, err := url.Parse(n.Server)
 	if err != nil {
 		return err
 	}
-	url.Path = path.Join(url.Path, "varz")
+	address.Path = path.Join(address.Path, "varz")
 
 	if n.client == nil {
 		n.client = n.createHTTPClient()
 	}
-	resp, err := n.client.Get(url.String())
+	resp, err := n.client.Get(address.String())
 	if err != nil {
 		return err
 	}

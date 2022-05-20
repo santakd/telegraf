@@ -16,29 +16,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-const description = "Read CPU, Fans, Powersupply and Voltage metrics of hardware server through redfish APIs"
-const sampleConfig = `
-  ## Server url
-  address = "https://127.0.0.1:5000"
-
-  ## Username, Password for hardware server
-  username = "root"
-  password = "password123456"
-
-  ## ComputerSystemId
-  computer_system_id="2M220100SL"
-
-  ## Amount of time allowed to complete the HTTP request
-  # timeout = "5s"
-
-  ## Optional TLS Config
-  # tls_ca = "/etc/telegraf/ca.pem"
-  # tls_cert = "/etc/telegraf/cert.pem"
-  # tls_key = "/etc/telegraf/key.pem"
-  ## Use TLS but skip chain & host verification
-  # insecure_skip_verify = false
-`
-
 type Redfish struct {
 	Address          string          `toml:"address"`
 	Username         string          `toml:"username"`
@@ -133,14 +110,6 @@ type Status struct {
 	Health string
 }
 
-func (r *Redfish) Description() string {
-	return description
-}
-
-func (r *Redfish) SampleConfig() string {
-	return sampleConfig
-}
-
 func (r *Redfish) Init() error {
 	if r.Address == "" {
 		return fmt.Errorf("did not provide IP")
@@ -176,8 +145,8 @@ func (r *Redfish) Init() error {
 	return nil
 }
 
-func (r *Redfish) getData(url string, payload interface{}) error {
-	req, err := http.NewRequest("GET", url, nil)
+func (r *Redfish) getData(address string, payload interface{}) error {
+	req, err := http.NewRequest("GET", address, nil)
 	if err != nil {
 		return err
 	}

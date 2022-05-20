@@ -22,17 +22,6 @@ type Chrony struct {
 	path      string
 }
 
-func (*Chrony) Description() string {
-	return "Get standard chrony metrics, requires chronyc executable."
-}
-
-func (*Chrony) SampleConfig() string {
-	return `
-  ## If true, chronyc tries to perform a DNS lookup for the time server.
-  # dns_lookup = false
-  `
-}
-
 func (c *Chrony) Init() error {
 	var err error
 	c.path, err = exec.LookPath("chronyc")
@@ -93,7 +82,7 @@ func processChronycOutput(out string) (map[string]interface{}, map[string]string
 		if len(stats) < 2 {
 			return nil, nil, fmt.Errorf("unexpected output from chronyc, expected ':' in %s", out)
 		}
-		name := strings.ToLower(strings.Replace(strings.TrimSpace(stats[0]), " ", "_", -1))
+		name := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(stats[0]), " ", "_"))
 		// ignore reference time
 		if strings.Contains(name, "ref_time") {
 			continue
