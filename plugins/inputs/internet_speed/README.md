@@ -1,10 +1,11 @@
-# Internet Speed Monitor
+# Internet Speed Monitor Input Plugin
 
-The `Internet Speed Monitor` collects data about the internet speed on the system.
+The `Internet Speed Monitor` collects data about the internet speed on the
+system.
 
 ## Configuration
 
-```toml
+```toml @sample.conf
 # Monitors internet speed using speedtest.net service
 [[inputs.internet_speed]]
   ## This plugin downloads many MB of data each time it is run. As such
