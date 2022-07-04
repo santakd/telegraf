@@ -78,7 +78,6 @@ commands:
                 key: windows-go-<< parameters.cache_version >>-{{ checksum "go.sum" }}
             - run: 'sh ./scripts/installgo_windows.sh'
             - run: choco install mingw
-      - run: mkdir -p test-results
       - run: ./scripts/install_gotestsum.sh << parameters.os >> << parameters.gotestsum >>
       - unless:
           condition:
@@ -86,9 +85,23 @@ commands:
           steps:
             - run: echo 'export RACE="-race"' >> $BASH_ENV
       - run: |
-          GOARCH=<< parameters.arch >> ./<< parameters.gotestsum >> --junitfile test-results/gotestsum-report.xml -- ${RACE} -short ./...
-      - store_test_results:
-          path: test-results
+          GOARCH=<< parameters.arch >> ./<< parameters.gotestsum >> -- ${RACE} -short -cover -coverprofile=coverage.out ./...
+      - when:
+          condition:
+            and:
+              - equal: [ "master", << pipeline.git.branch >> ]
+              - equal: [ "linux", << parameters.os >> ]
+              - equal: [ "amd64", << parameters.arch >> ]
+          steps:
+            - run:
+                name: "Installing goveralls"
+                command: go install github.com/mattn/goveralls@latest
+            - run:
+                name: "Remove plugins/parsers/influx/machine.go from coverage"
+                command: sed -i '/github.com\/influxdata\/telegraf\/plugins\/parsers\/influx\/machine.go/d' coverage.out
+            - run:
+                name: "Create report"
+                command: /go/bin/goveralls -coverprofile=coverage.out -service=circle-ci -repotoken=${COVERALLS_TOKEN}
       - when:
           condition:
             equal: [ linux, << parameters.os >> ]
@@ -398,6 +411,20 @@ jobs:
             docker tag telegraf-alpine quay.io/influxdb/telegraf-nightly:alpine
             docker image ls
             docker push quay.io/influxdb/telegraf-nightly:alpine
+  amd64-package-test-nightly:
+    machine:
+      image: ubuntu-2004:current
+    steps:
+      - checkout
+      - attach_workspace:
+          at: '.'
+      - run: sudo apt update && sudo apt install -y snapd
+      - run: sudo snap install lxd
+      - run: sudo lxd init --auto
+      - run: sudo usermod -a -G lxd $(whoami)
+      - run: cd tools/package_lxd_test && go build
+      - run: ./tools/package_lxd_test/package_lxd_test --package $(find ./dist -name "*_amd64.deb")
+      - run: ./tools/package_lxd_test/package_lxd_test --package $(find ./dist -name "*.x86_64.rpm")
   package-sign-windows:
     executor:
         name: win/default
@@ -733,23 +760,26 @@ workflows:
             - 'test-go-linux'
       - nightly:
           requires:
+            - 'amd64-package-test-nightly'
+            - 'arm64-package-nightly'
+            - 'armel-package-nightly'
+            - 'armhf-package-nightly'
+            - 'darwin-amd64-package-nightly'
+            - 'darwin-arm64-package-nightly'
             - 'i386-package-nightly'
+            - 'mips-package-nightly'
+            - 'mipsel-package-nightly'
             - 'ppc64le-package-nightly'
             - 'riscv64-package-nightly'
             - 's390x-package-nightly'
-            - 'armel-package-nightly'
-            - 'amd64-package-nightly'
-            - 'mipsel-package-nightly'
-            - 'mips-package-nightly'
-            - 'darwin-amd64-package-nightly'
-            - 'darwin-arm64-package-nightly'
-            - 'windows-package-nightly'
             - 'static-package-nightly'
-            - 'arm64-package-nightly'
-            - 'armhf-package-nightly'
+            - 'windows-package-nightly'
       - docker-nightly:
           requires:
             - 'nightly'
+      - amd64-package-test-nightly:
+          requires:
+            - 'amd64-package-nightly'
     triggers:
       - schedule:
           cron: "0 7 * * *"
