@@ -1,10 +1,9 @@
-ifeq ($(OS),Windows_NT)
-	next_version := $(shell type build_version.txt)
-	tag := $(shell git describe --exact-match --tags 2> nul)
-else
-	next_version := $(shell cat build_version.txt)
-	tag := $(shell git describe --exact-match --tags 2>/dev/null)
+ifneq (,$(filter $(OS),Windows_NT Windows))
+	EXEEXT=.exe
 endif
+
+next_version := $(shell cat build_version.txt)
+tag := $(shell git describe --exact-match --tags 2>/dev/null)
 
 branch := $(shell git rev-parse --abbrev-ref HEAD)
 commit := $(shell git rev-parse --short=8 HEAD)
@@ -46,12 +45,12 @@ MAKEFLAGS += --no-print-directory
 GOOS ?= $(shell go env GOOS)
 GOARCH ?= $(shell go env GOARCH)
 HOSTGO := env -u GOOS -u GOARCH -u GOARM -- go
-
-LDFLAGS := $(LDFLAGS) -X main.commit=$(commit) -X main.branch=$(branch) -X main.goos=$(GOOS) -X main.goarch=$(GOARCH)
+INTERNAL_PKG=github.com/influxdata/telegraf/internal
+LDFLAGS := $(LDFLAGS) -X $(INTERNAL_PKG).Commit=$(commit) -X $(INTERNAL_PKG).Branch=$(branch)
 ifneq ($(tag),)
-	LDFLAGS += -X main.version=$(version)
+	LDFLAGS += -X $(INTERNAL_PKG).Version=$(version)
 else
-	LDFLAGS += -X main.version=$(version)-$(commit)
+	LDFLAGS += -X $(INTERNAL_PKG).Version=$(version)-$(commit)
 endif
 
 # Go built-in race detector works only for 64 bits architectures.
@@ -115,8 +114,9 @@ versioninfo:
 	go generate cmd/telegraf/telegraf_windows.go; \
 
 build_tools:
-	$(HOSTGO) build -o ./tools/license_checker/license_checker ./tools/license_checker
-	$(HOSTGO) build -o ./tools/readme_config_includer/generator ./tools/readme_config_includer/generator.go
+	$(HOSTGO) build -o ./tools/custom_builder/custom_builder$(EXEEXT) ./tools/custom_builder
+	$(HOSTGO) build -o ./tools/license_checker/license_checker$(EXEEXT) ./tools/license_checker
+	$(HOSTGO) build -o ./tools/readme_config_includer/generator$(EXEEXT) ./tools/readme_config_includer/generator.go
 
 embed_readme_%:
 	go generate -run="readme_config_includer/generator$$" ./plugins/$*/...
@@ -126,7 +126,7 @@ docs: build_tools embed_readme_inputs embed_readme_outputs embed_readme_processo
 
 .PHONY: build
 build:
-	go build -ldflags "$(LDFLAGS)" ./cmd/telegraf
+	go build -tags "$(BUILDTAGS)" -ldflags "$(LDFLAGS)" ./cmd/telegraf
 
 .PHONY: telegraf
 telegraf: build
@@ -224,6 +224,8 @@ clean:
 	rm -f telegraf
 	rm -f telegraf.exe
 	rm -rf build
+	rm -rf tools/custom_builder/custom_builder
+	rm -rf tools/custom_builder/custom_builder.exe
 	rm -rf tools/readme_config_includer/generator
 	rm -rf tools/readme_config_includer/generator.exe
 	rm -rf tools/package_lxd_test/package_lxd_test
@@ -240,8 +242,8 @@ plugins/parsers/influx/machine.go: plugins/parsers/influx/machine.go.rl
 
 .PHONY: ci
 ci:
-	docker build -t quay.io/influxdb/telegraf-ci:1.18.4 - < scripts/ci.docker
-	docker push quay.io/influxdb/telegraf-ci:1.18.4
+	docker build -t quay.io/influxdb/telegraf-ci:1.18.5 - < scripts/ci.docker
+	docker push quay.io/influxdb/telegraf-ci:1.18.5
 
 .PHONY: install
 install: $(buildbin)
