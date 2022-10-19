@@ -8,14 +8,12 @@ import (
 	"regexp"
 	"strings"
 
-	wavefront "github.com/wavefronthq/wavefront-sdk-go/senders"
-
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/outputs"
+	serializer "github.com/influxdata/telegraf/plugins/serializers/wavefront"
+	wavefront "github.com/wavefronthq/wavefront-sdk-go/senders"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
-//
 //go:embed sample.conf
 var sampleConfig string
 
@@ -66,14 +64,6 @@ var sanitizedRegex = regexp.MustCompile(`[^a-zA-Z\d_.-]`)
 var tagValueReplacer = strings.NewReplacer("*", "-")
 
 var pathReplacer = strings.NewReplacer("_", "_")
-
-type MetricPoint struct {
-	Metric    string
-	Value     float64
-	Timestamp int64
-	Source    string
-	Tags      map[string]string
-}
 
 func (*Wavefront) SampleConfig() string {
 	return sampleConfig
@@ -155,8 +145,8 @@ func (w *Wavefront) Write(metrics []telegraf.Metric) error {
 	return nil
 }
 
-func (w *Wavefront) buildMetrics(m telegraf.Metric) []*MetricPoint {
-	ret := make([]*MetricPoint, 0)
+func (w *Wavefront) buildMetrics(m telegraf.Metric) []*serializer.MetricPoint {
+	ret := make([]*serializer.MetricPoint, 0)
 
 	for fieldName, value := range m.Fields() {
 		var name string
@@ -178,7 +168,7 @@ func (w *Wavefront) buildMetrics(m telegraf.Metric) []*MetricPoint {
 			name = pathReplacer.Replace(name)
 		}
 
-		metric := &MetricPoint{
+		metric := &serializer.MetricPoint{
 			Metric:    name,
 			Timestamp: m.Time().Unix(),
 		}

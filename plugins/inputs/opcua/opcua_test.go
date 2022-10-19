@@ -136,6 +136,31 @@ func TestClient1Integration(t *testing.T) {
 			t.Errorf("Tag: %s has value: %v", o.nodes[i].tag.FieldName, v.Value)
 		}
 	}
+
+	// test unregistered reads workaround
+	o.Workarounds.UseUnregisteredReads = true
+
+	for i := range o.nodeData {
+		o.nodeData[i] = OPCData{}
+	}
+
+	err = Connect(&o)
+	if err != nil {
+		t.Fatalf("Connect Error: %s", err)
+	}
+
+	for i, v := range o.nodeData {
+		if v.Value != nil {
+			types := reflect.TypeOf(v.Value)
+			value := reflect.ValueOf(v.Value)
+			compare := fmt.Sprintf("%v", value.Interface())
+			if compare != testopctags[i].Want {
+				t.Errorf("Tag %s: Values %v for type %s  does not match record", o.nodes[i].tag.FieldName, value.Interface(), types)
+			}
+		} else if testopctags[i].Want != nil {
+			t.Errorf("Tag: %s has value: %v", o.nodes[i].tag.FieldName, v.Value)
+		}
+	}
 }
 
 func MapOPCTag(tags OPCTags) (out NodeSettings) {
@@ -161,8 +186,8 @@ auth_method = "Anonymous"
 username = ""
 password = ""
 nodes = [
-  {name="name", namespace="1", identifier_type="s", identifier="one"},
-  {name="name2", namespace="2", identifier_type="s", identifier="two"},
+  {name="name", namespace="1", identifier_type="s", identifier="one", tags=[["tag0", "val0"]]},
+  {name="name2", namespace="2", identifier_type="s", identifier="two", tags=[["tag0", "val0"], ["tag00", "val00"]]},
 ]
 [[inputs.opcua.group]]
 name = "foo"
@@ -201,6 +226,8 @@ additional_valid_status_codes = ["0xC0"]
 
 	require.NoError(t, o.InitNodes())
 	require.Len(t, o.nodes, 4)
+	require.Len(t, o.nodes[0].metricTags, 1)
+	require.Len(t, o.nodes[1].metricTags, 2)
 	require.Len(t, o.nodes[2].metricTags, 3)
 	require.Len(t, o.nodes[3].metricTags, 2)
 

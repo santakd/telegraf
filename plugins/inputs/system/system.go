@@ -18,8 +18,6 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
-//
 //go:embed sample.conf
 var sampleConfig string
 
@@ -88,7 +86,6 @@ func formatUptime(uptime uint64) string {
 			s = "s"
 		}
 		// This will always succeed, so skip checking the error
-		//nolint:errcheck,revive
 		fmt.Fprintf(w, "%d day%s, ", days, s)
 	}
 
@@ -98,7 +95,6 @@ func formatUptime(uptime uint64) string {
 	minutes %= 60
 
 	// This will always succeed, so skip checking the error
-	//nolint:errcheck,revive
 	fmt.Fprintf(w, "%2d:%02d", hours, minutes)
 
 	// This will always succeed, so skip checking the error

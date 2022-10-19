@@ -58,7 +58,7 @@ type processorUnit struct {
 }
 
 // aggregatorUnit is a group of Aggregators and their source and sink channels.
-// Typically the aggregators write to a processor channel and pass the original
+// Typically, the aggregators write to a processor channel and pass the original
 // metrics to the output channel.  The sink channels may be the same channel.
 
 //                 ┌────────────┐
@@ -200,13 +200,6 @@ func (a *Agent) initPlugins() error {
 				input.LogName(), err)
 		}
 	}
-	for _, parser := range a.Config.Parsers {
-		err := parser.Init()
-		if err != nil {
-			return fmt.Errorf("could not initialize parser %s::%s: %v",
-				parser.Config.DataFormat, parser.Config.Parent, err)
-		}
-	}
 	for _, processor := range a.Config.Processors {
 		err := processor.Init()
 		if err != nil {
@@ -287,6 +280,7 @@ func (a *Agent) runInputs(
 	unit *inputUnit,
 ) {
 	var wg sync.WaitGroup
+	tickers := make([]Ticker, len(unit.inputs))
 	for _, input := range unit.inputs {
 		// Overwrite agent interval if this plugin has its own.
 		interval := time.Duration(a.Config.Agent.Interval)
@@ -318,7 +312,7 @@ func (a *Agent) runInputs(
 		} else {
 			ticker = NewUnalignedTicker(interval, jitter, offset)
 		}
-		defer ticker.Stop()
+		tickers = append(tickers, ticker)
 
 		acc := NewAccumulator(input, unit.dst)
 		acc.SetPrecision(getPrecision(precision, interval))
@@ -329,7 +323,7 @@ func (a *Agent) runInputs(
 			a.gatherLoop(ctx, acc, input, ticker, interval)
 		}(input)
 	}
-
+	defer stopTickers(tickers)
 	wg.Wait()
 
 	log.Printf("D! [agent] Stopping service inputs")
@@ -384,6 +378,7 @@ func (a *Agent) testRunInputs(
 
 	nul := make(chan telegraf.Metric)
 	go func() {
+		//nolint:revive // empty block needed here
 		for range nul {
 		}
 	}()
@@ -728,7 +723,7 @@ func (a *Agent) connectOutput(ctx context.Context, output *models.RunningOutput)
 
 		err = output.Output.Connect()
 		if err != nil {
-			return fmt.Errorf("Error connecting to output %q: %w", output.LogName(), err)
+			return fmt.Errorf("error connecting to output %q: %w", output.LogName(), err)
 		}
 	}
 	log.Printf("D! [agent] Successfully connected to %s", output.LogName())
@@ -889,7 +884,7 @@ func (a *Agent) Test(ctx context.Context, wait time.Duration) error {
 		}
 	}()
 
-	err := a.test(ctx, wait, src)
+	err := a.runTest(ctx, wait, src)
 	if err != nil {
 		return err
 	}
@@ -902,10 +897,10 @@ func (a *Agent) Test(ctx context.Context, wait time.Duration) error {
 	return nil
 }
 
-// Test runs the agent and performs a single gather sending output to the
-// outputF.  After gathering pauses for the wait duration to allow service
+// runTest runs the agent and performs a single gather sending output to the
+// outputC. After gathering pauses for the wait duration to allow service
 // inputs to run.
-func (a *Agent) test(ctx context.Context, wait time.Duration, outputC chan<- telegraf.Metric) error {
+func (a *Agent) runTest(ctx context.Context, wait time.Duration, outputC chan<- telegraf.Metric) error {
 	log.Printf("D! [agent] Initializing plugins")
 	err := a.initPlugins()
 	if err != nil {
@@ -978,7 +973,7 @@ func (a *Agent) test(ctx context.Context, wait time.Duration, outputC chan<- tel
 
 // Once runs the full agent for a single gather.
 func (a *Agent) Once(ctx context.Context, wait time.Duration) error {
-	err := a.once(ctx, wait)
+	err := a.runOnce(ctx, wait)
 	if err != nil {
 		return err
 	}
@@ -997,10 +992,10 @@ func (a *Agent) Once(ctx context.Context, wait time.Duration) error {
 	return nil
 }
 
-// On runs the agent and performs a single gather sending output to the
-// outputF.  After gathering pauses for the wait duration to allow service
+// runOnce runs the agent and performs a single gather sending output to the
+// outputC. After gathering pauses for the wait duration to allow service
 // inputs to run.
-func (a *Agent) once(ctx context.Context, wait time.Duration) error {
+func (a *Agent) runOnce(ctx context.Context, wait time.Duration) error {
 	log.Printf("D! [agent] Initializing plugins")
 	err := a.initPlugins()
 	if err != nil {
@@ -1101,6 +1096,7 @@ func getPrecision(precision, interval time.Duration) time.Duration {
 
 // panicRecover displays an error if an input panics.
 func panicRecover(input *models.RunningInput) {
+	//nolint:revive // recover is called inside a deferred function
 	if err := recover(); err != nil {
 		trace := make([]byte, 2048)
 		runtime.Stack(trace, true)
@@ -1109,5 +1105,11 @@ func panicRecover(input *models.RunningInput) {
 		log.Println("E! PLEASE REPORT THIS PANIC ON GITHUB with " +
 			"stack trace, configuration, and OS information: " +
 			"https://github.com/influxdata/telegraf/issues/new/choose")
+	}
+}
+
+func stopTickers(tickers []Ticker) {
+	for _, ticker := range tickers {
+		ticker.Stop()
 	}
 }

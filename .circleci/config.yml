@@ -8,7 +8,7 @@ executors:
     working_directory: '/go/src/github.com/influxdata/telegraf'
     resource_class: large
     docker:
-      - image: 'quay.io/influxdb/telegraf-ci:1.19.1'
+      - image: 'quay.io/influxdb/telegraf-ci:1.19.2'
     environment:
       GOFLAGS: -p=4
   mac:
@@ -74,6 +74,7 @@ commands:
             equal: [ windows, << parameters.os >> ]
           steps:
             - run: rm -rf /c/Go
+            - run: choco feature enable -n allowGlobalConfirmation
             - restore_cache:
                 key: windows-go-<< parameters.cache_version >>-{{ checksum "go.sum" }}
             - run: 'sh ./scripts/installgo_windows.sh'
@@ -401,6 +402,16 @@ jobs:
               --include "*.rpm" \
               --include "*.zip" \
               --acl public-read
+  govulncheck:
+    executor: telegraf-ci
+    steps:
+      - checkout
+      - run:
+          name: Install latest govulncheck
+          command: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run:
+          name: Scan master with govulncheck
+          command: govulncheck ./...
   docker-nightly:
     machine:
       image: ubuntu-2004:current
@@ -518,6 +529,9 @@ jobs:
 workflows:
   version: 2
   check:
+    when:
+      not:
+        equal: [ scheduled_pipeline, << pipeline.trigger_source >> ]
     jobs:
       - 'test-go-linux':
           filters:
@@ -609,9 +623,6 @@ workflows:
           requires:
             - 'test-go-linux'
           filters:
-            branches:
-              ignore:
-                - master
             tags:
               only: /.*/
       - 'arm64-package':
@@ -735,6 +746,8 @@ workflows:
               ignore: /.*/
 
   nightly:
+    when:
+      equal: [ scheduled_pipeline, << pipeline.trigger_source >> ]
     jobs:
       - 'test-go-linux'
       - 'test-go-linux-386'
@@ -840,10 +853,6 @@ workflows:
       - amd64-package-test-nightly:
           requires:
             - 'amd64-package-nightly'
-    triggers:
-      - schedule:
-          cron: "0 7 * * *"
-          filters:
-            branches:
-              only:
-                - master
+      - govulncheck:
+          requires:
+            - 'nightly'

@@ -3,10 +3,9 @@ package opentelemetry
 
 import (
 	"context"
+	ntls "crypto/tls"
 	_ "embed"
 	"time"
-
-	ntls "crypto/tls"
 
 	"github.com/influxdata/influxdb-observability/common"
 	"github.com/influxdata/influxdb-observability/influx2otel"
@@ -28,8 +27,6 @@ import (
 
 var userAgent = internal.ProductToken()
 
-// DO NOT REMOVE THE NEXT TWO LINES! This is required to embed the sampleConfig data.
-//
 //go:embed sample.conf
 var sampleConfig string
 
@@ -47,7 +44,7 @@ type OpenTelemetry struct {
 
 	metricsConverter     *influx2otel.LineProtocolToOtelMetrics
 	grpcClientConn       *grpc.ClientConn
-	metricsServiceClient pmetricotlp.Client
+	metricsServiceClient pmetricotlp.GRPCClient
 	callOptions          []grpc.CallOption
 }
 
@@ -160,7 +157,7 @@ func (o *OpenTelemetry) Write(metrics []telegraf.Metric) error {
 	if len(o.Attributes) > 0 {
 		for i := 0; i < md.Metrics().ResourceMetrics().Len(); i++ {
 			for k, v := range o.Attributes {
-				md.Metrics().ResourceMetrics().At(i).Resource().Attributes().UpsertString(k, v)
+				md.Metrics().ResourceMetrics().At(i).Resource().Attributes().PutString(k, v)
 			}
 		}
 	}
