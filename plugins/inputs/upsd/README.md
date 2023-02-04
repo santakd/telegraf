@@ -7,6 +7,15 @@ from an upsd daemon using its NUT network protocol.
 
 upsd should be installed and it's daemon should be running.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -17,6 +26,12 @@ upsd should be installed and it's daemon should be running.
   # port = 3493
   # username = "user"
   # password = "password"
+
+  ## Force parsing numbers as floats
+  ## It is highly recommended to enable this setting to parse numbers
+  ## consistently as floats to avoid database conflicts where some numbers are
+  ## parsed as integers and others as floats.
+  # force_float = false
 ```
 
 ## Metrics

@@ -24,11 +24,11 @@ type Agent struct {
 }
 
 // NewAgent returns an Agent for the given Config.
-func NewAgent(cfg *config.Config) (*Agent, error) {
+func NewAgent(cfg *config.Config) *Agent {
 	a := &Agent{
 		Config: cfg,
 	}
-	return a, nil
+	return a
 }
 
 // inputUnit is a group of input plugins and the shared channel they write to.
@@ -280,7 +280,7 @@ func (a *Agent) runInputs(
 	unit *inputUnit,
 ) {
 	var wg sync.WaitGroup
-	tickers := make([]Ticker, len(unit.inputs))
+	tickers := make([]Ticker, 0, len(unit.inputs))
 	for _, input := range unit.inputs {
 		// Overwrite agent interval if this plugin has its own.
 		interval := time.Duration(a.Config.Agent.Interval)
@@ -423,7 +423,9 @@ func (a *Agent) testRunInputs(
 	}
 	wg.Wait()
 
-	internal.SleepContext(ctx, wait)
+	if err := internal.SleepContext(ctx, wait); err != nil {
+		log.Printf("E! [agent] SleepContext finished with: %v", err)
+	}
 
 	log.Printf("D! [agent] Stopping service inputs")
 	stopServiceInputs(unit.inputs)
@@ -511,14 +513,13 @@ func (a *Agent) startProcessors(
 	dst chan<- telegraf.Metric,
 	processors models.RunningProcessors,
 ) (chan<- telegraf.Metric, []*processorUnit, error) {
-	var units []*processorUnit
-
 	// Sort from last to first
 	sort.SliceStable(processors, func(i, j int) bool {
 		return processors[i].Config.Order > processors[j].Config.Order
 	})
 
 	var src chan telegraf.Metric
+	units := make([]*processorUnit, 0, len(processors))
 	for _, processor := range processors {
 		src = make(chan telegraf.Metric, 100)
 		acc := NewAccumulator(processor, dst)

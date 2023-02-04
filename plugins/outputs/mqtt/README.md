@@ -12,6 +12,24 @@ set, the server will return with `identifier rejected`.
 
 As a reference `eclipse/paho.golang` sets the `keep_alive` to 30.
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username` and
+`password` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -30,8 +48,13 @@ As a reference `eclipse/paho.golang` sets the `keep_alive` to 30.
 
   ## MQTT Topic for Producer Messages
   ## MQTT outputs send metrics to this topic format:
-  ## <topic_prefix>/<hostname>/<pluginname>/ (e.g. prefix/web01.example.com/mem)
-  topic_prefix = "telegraf"
+  ## {{ .TopicPrefix }}/{{ .Hostname }}/{{ .PluginName }}/{{ .Tag "tag_key" }}
+  ## (e.g. prefix/web01.example.com/mem/some_tag_value)
+  ## Each path segment accepts either a template placeholder, an environment variable, or a tag key
+  ## of the form `{{.Tag "tag_key_name"}}`. Empty path elements as well as special MQTT characters
+  ## (such as `+` or `#`) are invalid to form the topic name and will lead to an error.
+  ## In case a tag is missing in the metric, that path segment omitted for the final topic.
+  topic = "telegraf/{{ .Hostname }}/{{ .PluginName }}"
 
   ## QoS policy for messages
   ## The mqtt QoS policy for sending messages.

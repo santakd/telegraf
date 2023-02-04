@@ -53,7 +53,7 @@ func TestExternalProcessorWorks(t *testing.T) {
 	}
 
 	acc.Wait(1)
-	require.NoError(t, e.Stop())
+	e.Stop()
 	acc.Wait(9)
 
 	metrics := acc.GetTelegrafMetrics()
@@ -116,7 +116,7 @@ func TestParseLinesWithNewLines(t *testing.T) {
 	require.NoError(t, e.Add(m, acc))
 
 	acc.Wait(1)
-	require.NoError(t, e.Stop())
+	e.Stop()
 
 	processedMetric := acc.GetTelegrafMetrics()[0]
 
@@ -151,7 +151,7 @@ func TestMain(m *testing.M) {
 func runCountMultiplierProgram() {
 	fieldName := os.Getenv("FIELD_NAME")
 	parser := influx.NewStreamParser(os.Stdin)
-	serializer, _ := serializers.NewInfluxSerializer()
+	serializer := serializers.NewInfluxSerializer()
 
 	for {
 		m, err := parser.Next()

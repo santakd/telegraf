@@ -128,7 +128,11 @@ func (g *Graphite) checkEOF(conn net.Conn) error {
 	b := make([]byte, 1024)
 
 	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Millisecond)); err != nil {
-		g.Log.Debugf("Couldn't set read deadline for connection due to error %v with remote address %s. closing conn explicitly", err, conn.RemoteAddr().String())
+		g.Log.Debugf(
+			"Couldn't set read deadline for connection due to error %v with remote address %s. closing conn explicitly",
+			err,
+			conn.RemoteAddr().String(),
+		)
 		err = conn.Close()
 		g.Log.Debugf("Failed to close the connection: %v", err)
 		return err
@@ -209,18 +213,18 @@ func (g *Graphite) send(batch []byte) error {
 			g.failedServers = append(g.failedServers, g.conns[n].RemoteAddr().String())
 			break
 		}
-		if _, e := g.conns[n].Write(batch); e != nil {
-			// Error
-			g.Log.Debugf("Graphite Error: " + e.Error())
-			// Close explicitly and let's try the next one
-			err := g.conns[n].Close()
-			g.Log.Debugf("Failed to close the connection: %v", err)
-			// Mark server as failed so a new connection will be made
-			g.failedServers = append(g.failedServers, g.conns[n].RemoteAddr().String())
-		} else {
+		_, e := g.conns[n].Write(batch)
+		if e == nil {
 			globalErr = nil
 			break
 		}
+		// Error
+		g.Log.Debugf("Graphite Error: " + e.Error())
+		// Close explicitly and let's try the next one
+		err = g.conns[n].Close()
+		g.Log.Debugf("Failed to close the connection: %v", err)
+		// Mark server as failed so a new connection will be made
+		g.failedServers = append(g.failedServers, g.conns[n].RemoteAddr().String())
 	}
 
 	return globalErr

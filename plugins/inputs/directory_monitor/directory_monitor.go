@@ -81,8 +81,7 @@ func (monitor *DirectoryMonitor) Gather(_ telegraf.Accumulator) error {
 
 		stat, err := times.Stat(path)
 		if err != nil {
-			// Don't stop traversing if there is an eror
-			return nil //nolint:nilerr
+			return nil //nolint:nilerr // don't stop traversing if there is an error
 		}
 
 		timeThresholdExceeded := time.Since(stat.AccessTime()) >= time.Duration(monitor.DirectoryDurationThreshold)
@@ -105,7 +104,6 @@ func (monitor *DirectoryMonitor) Gather(_ telegraf.Accumulator) error {
 			})
 		// We've been cancelled via Stop().
 		if err == io.EOF {
-			//nolint:nilerr // context cancelation is not an error
 			return nil
 		}
 		if err != nil {
@@ -126,7 +124,6 @@ func (monitor *DirectoryMonitor) Gather(_ telegraf.Accumulator) error {
 			err := processFile(path)
 			// We've been cancelled via Stop().
 			if err == io.EOF {
-				//nolint:nilerr // context cancelation is not an error
 				return nil
 			}
 		}
@@ -321,18 +318,41 @@ func (monitor *DirectoryMonitor) sendMetrics(metrics []telegraf.Metric) error {
 	return nil
 }
 
-func (monitor *DirectoryMonitor) moveFile(filePath string, directory string) {
-	basePath := strings.Replace(filePath, monitor.Directory, "", 1)
-	newPath := filepath.Join(directory, basePath)
-
-	err := os.MkdirAll(filepath.Dir(newPath), os.ModePerm)
+func (monitor *DirectoryMonitor) moveFile(srcPath string, dstBaseDir string) {
+	// Appends any subdirectories in the srcPath to the dstBaseDir and
+	// creates those subdirectories.
+	basePath := strings.Replace(srcPath, monitor.Directory, "", 1)
+	dstPath := filepath.Join(dstBaseDir, basePath)
+	err := os.MkdirAll(filepath.Dir(dstPath), os.ModePerm)
 	if err != nil {
-		monitor.Log.Errorf("Error creating directory hierachy for " + filePath + ". Error: " + err.Error())
+		monitor.Log.Errorf("Error creating directory hierachy for " + srcPath + ". Error: " + err.Error())
 	}
 
-	err = os.Rename(filePath, newPath)
+	inputFile, err := os.Open(srcPath)
 	if err != nil {
-		monitor.Log.Errorf("Error while moving file '" + filePath + "' to another directory. Error: " + err.Error())
+		monitor.Log.Errorf("Could not open input file: %s", err)
+	}
+
+	outputFile, err := os.Create(dstPath)
+	if err != nil {
+		monitor.Log.Errorf("Could not open output file: %s", err)
+	}
+	defer outputFile.Close()
+
+	_, err = io.Copy(outputFile, inputFile)
+	if err != nil {
+		monitor.Log.Errorf("Writing to output file failed: %s", err)
+	}
+
+	// We need to close the file for remove on Windows as we otherwise
+	// will run into a "being used by another process" error
+	// (see https://github.com/influxdata/telegraf/issues/12287)
+	if err := inputFile.Close(); err != nil {
+		monitor.Log.Errorf("Could not close input file: %s", err)
+	}
+
+	if err := os.Remove(srcPath); err != nil {
+		monitor.Log.Errorf("Failed removing original file: %s", err)
 	}
 }
 

@@ -8,6 +8,15 @@ See the [Tomcat documentation][1] for details of these statistics.
 
 [1]: https://tomcat.apache.org/tomcat-9.0-doc/manager-howto.html#Server_Status
 
+## Global configuration options <!-- @/docs/includes/plugin_config.md -->
+
+In addition to the plugin-specific configuration settings, plugins support
+additional global and plugin configuration settings. These settings are used to
+modify metrics, tags, and field or create aliases and configure ordering, etc.
+See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
+
+[CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
 ## Configuration
 
 ```toml @sample.conf
@@ -55,11 +64,15 @@ See the [Tomcat documentation][1] for details of these statistics.
 
 ### Tags
 
+- tomcat_jvm_memory
+  - source
 - tomcat_jvm_memorypool has the following tags:
   - name
   - type
+  - source
 - tomcat_connector
   - name
+  - source
 
 ## Example Output
 

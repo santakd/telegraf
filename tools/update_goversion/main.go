@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
-	"log" //nolint:revive
+	"log"
 	"net/http"
 	"os"
 	"regexp"
@@ -142,6 +142,11 @@ func main() {
 			FileName: ".circleci/config.yml",
 			Regex:    `(quay\.io\/influxdb\/telegraf-ci):(\d.\d*.\d)`,
 			Replace:  fmt.Sprintf("$1:%s", version),
+		},
+		{
+			FileName: ".github/workflows/golangci-lint.yml",
+			Regex:    `(go-version).*`,
+			Replace:  fmt.Sprintf("$1: '%s'", zeroPatchVersion),
 		},
 		{
 			FileName: "Makefile",

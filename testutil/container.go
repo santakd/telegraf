@@ -42,8 +42,7 @@ type Container struct {
 func (c *Container) Start() error {
 	c.ctx = context.Background()
 
-	var containerMounts []testcontainers.ContainerMount
-
+	containerMounts := make([]testcontainers.ContainerMount, 0, len(c.BindMounts))
 	for k, v := range c.BindMounts {
 		containerMounts = append(containerMounts, testcontainers.BindMount(v, testcontainers.ContainerMountTarget(k)))
 	}
@@ -81,7 +80,7 @@ func (c *Container) Start() error {
 
 	err = c.LookupMappedPorts()
 	if err != nil {
-		_ = c.Terminate()
+		c.Terminate()
 		return fmt.Errorf("port lookup failed: %s", err)
 	}
 
@@ -132,7 +131,7 @@ func (c *Container) PrintLogs() {
 	fmt.Println("--- Container Logs End ---")
 }
 
-func (c *Container) Terminate() error {
+func (c *Container) Terminate() {
 	err := c.container.StopLogProducer()
 	if err != nil {
 		fmt.Println(err)
@@ -144,6 +143,4 @@ func (c *Container) Terminate() error {
 	}
 
 	c.PrintLogs()
-
-	return nil
 }

@@ -3,7 +3,6 @@ package wavefront
 import (
 	"log"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/influxdata/telegraf"
@@ -19,27 +18,6 @@ type WavefrontSerializer struct {
 	mu                       sync.Mutex // buffer mutex
 }
 
-// catch many of the invalid chars that could appear in a metric or tag name
-var sanitizedChars = strings.NewReplacer(
-	"!", "-", "@", "-", "#", "-", "$", "-", "%", "-", "^", "-", "&", "-",
-	"*", "-", "(", "-", ")", "-", "+", "-", "`", "-", "'", "-", "\"", "-",
-	"[", "-", "]", "-", "{", "-", "}", "-", ":", "-", ";", "-", "<", "-",
-	">", "-", ",", "-", "?", "-", "/", "-", "\\", "-", "|", "-", " ", "-",
-	"=", "-",
-)
-
-// catch many of the invalid chars that could appear in a metric or tag name
-var strictSanitizedChars = strings.NewReplacer(
-	"!", "-", "@", "-", "#", "-", "$", "-", "%", "-", "^", "-", "&", "-",
-	"*", "-", "(", "-", ")", "-", "+", "-", "`", "-", "'", "-", "\"", "-",
-	"[", "-", "]", "-", "{", "-", "}", "-", ":", "-", ";", "-", "<", "-",
-	">", "-", "?", "-", "\\", "-", "|", "-", " ", "-", "=", "-",
-)
-
-var tagValueReplacer = strings.NewReplacer("\"", "\\\"", "*", "-")
-
-var pathReplacer = strings.NewReplacer("_", ".")
-
 type MetricPoint struct {
 	Metric    string
 	Value     float64
@@ -48,14 +26,14 @@ type MetricPoint struct {
 	Tags      map[string]string
 }
 
-func NewSerializer(prefix string, useStrict bool, sourceOverride []string, disablePrefixConversion bool) (*WavefrontSerializer, error) {
+func NewSerializer(prefix string, useStrict bool, sourceOverride []string, disablePrefixConversion bool) *WavefrontSerializer {
 	s := &WavefrontSerializer{
 		Prefix:                   prefix,
 		UseStrict:                useStrict,
 		SourceOverride:           sourceOverride,
 		DisablePrefixConversions: disablePrefixConversion,
 	}
-	return s, nil
+	return s
 }
 
 func (s *WavefrontSerializer) serializeMetric(m telegraf.Metric) {
@@ -70,11 +48,7 @@ func (s *WavefrontSerializer) serializeMetric(m telegraf.Metric) {
 			name = s.Prefix + m.Name() + metricSeparator + fieldName
 		}
 
-		if s.UseStrict {
-			name = strictSanitizedChars.Replace(name)
-		} else {
-			name = sanitizedChars.Replace(name)
-		}
+		name = Sanitize(s.UseStrict, name)
 
 		if !s.DisablePrefixConversions {
 			name = pathReplacer.Replace(name)
@@ -182,11 +156,7 @@ func formatMetricPoint(b *buffer, metricPoint *MetricPoint, s *WavefrontSerializ
 
 	for k, v := range metricPoint.Tags {
 		b.WriteString(` "`)
-		if s.UseStrict {
-			b.WriteString(strictSanitizedChars.Replace(k))
-		} else {
-			b.WriteString(sanitizedChars.Replace(k))
-		}
+		b.WriteString(Sanitize(s.UseStrict, k))
 		b.WriteString(`"="`)
 		b.WriteString(tagValueReplacer.Replace(v))
 		b.WriteChar('"')
@@ -202,9 +172,8 @@ type buffer []byte
 func (b *buffer) Reset() { *b = (*b)[:0] }
 
 func (b *buffer) Copy() []byte {
-	p := make([]byte, len(*b))
-	copy(p, *b)
-	return p
+	p := make([]byte, 0, len(*b))
+	return append(p, *b...)
 }
 
 func (b *buffer) WriteString(s string) {

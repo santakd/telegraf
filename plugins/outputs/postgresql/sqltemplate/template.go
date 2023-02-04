@@ -72,7 +72,8 @@ A simple example for usage with TimescaleDB would be:
 
 ...where the defaults for the other templates would be automatically applied.
 
-A very complex example for versions of TimescaleDB which don't support adding columns to compressed hypertables (v<2.1.0), using views and unions to emulate the functionality, would be:
+A very complex example for versions of TimescaleDB which don't support adding columns to compressed hypertables (v<2.1.0),
+using views and unions to emulate the functionality, would be:
 
 	[outputs.postgresql]
 	  schema = "telegraf"
@@ -260,9 +261,9 @@ func (tc Column) IsField() bool {
 type Columns []Column
 
 func NewColumns(cols []utils.Column) Columns {
-	tcols := make(Columns, len(cols))
-	for i, col := range cols {
-		tcols[i] = Column(col)
+	tcols := make(Columns, 0, len(cols))
+	for _, col := range cols {
+		tcols = append(tcols, Column(col))
 	}
 	return tcols
 }
@@ -274,36 +275,36 @@ func (cols Columns) List() []Column {
 
 // Definitions returns the list of column definitions.
 func (cols Columns) Definitions() []string {
-	defs := make([]string, len(cols))
-	for i, tc := range cols {
-		defs[i] = tc.Definition()
+	defs := make([]string, 0, len(cols))
+	for _, tc := range cols {
+		defs = append(defs, tc.Definition())
 	}
 	return defs
 }
 
 // Identifiers returns the list of quoted column identifiers.
 func (cols Columns) Identifiers() []string {
-	idents := make([]string, len(cols))
-	for i, tc := range cols {
-		idents[i] = tc.Identifier()
+	idents := make([]string, 0, len(cols))
+	for _, tc := range cols {
+		idents = append(idents, tc.Identifier())
 	}
 	return idents
 }
 
 // Selectors returns the list of column selectors.
 func (cols Columns) Selectors() []string {
-	selectors := make([]string, len(cols))
-	for i, tc := range cols {
-		selectors[i] = tc.Selector()
+	selectors := make([]string, 0, len(cols))
+	for _, tc := range cols {
+		selectors = append(selectors, tc.Selector())
 	}
 	return selectors
 }
 
 // String returns the comma delimited list of column identifiers.
 func (cols Columns) String() string {
-	colStrs := make([]string, len(cols))
-	for i, tc := range cols {
-		colStrs[i] = tc.String()
+	colStrs := make([]string, 0, len(cols))
+	for _, tc := range cols {
+		colStrs = append(colStrs, tc.String())
 	}
 	return strings.Join(colStrs, ", ")
 }

@@ -157,6 +157,45 @@ parsed:
   bucket = "replace_with_your_bucket_name"
 ```
 
+## Secret-store secrets
+
+Additional or instead of environment variables, you can use secret-stores
+to fill in credentials or similar. To do so, you need to configure one or more
+secret-store plugin(s) and then reference the secret in your plugin
+configurations. A reference to a secret is specified in form
+`@{<secret store id>:<secret name>}`, where the `secret store id` is the unique
+ID you defined for your secret-store and `secret name` is the name of the secret
+to use.
+
+**Example**:
+
+This example illustrates the use of secret-store(s) in plugins
+
+```toml
+[global_tags]
+  user = "alice"
+
+[[secretstores.os]]
+  id = "local_secrets"
+
+[[secretstores.jose]]
+  id = "cloud_secrets"
+  path = "/etc/telegraf/secrets"
+  # Optional reference to another secret store to unlock this one.
+  password = "@{local_secrets:cloud_store_passwd}"
+
+[[inputs.http]]
+  urls = ["http://server.company.org/metrics"]
+  username = "@{local_secrets:company_server_http_metric_user}"
+  password = "@{local_secrets:company_server_http_metric_pass}"
+
+[[outputs.influxdb_v2]]
+  urls = ["https://us-west-2-1.aws.cloud2.influxdata.com"]
+  token = "@{cloud_secrets:influxdb_token}"
+  organization = "yourname@yourcompany.com"
+  bucket = "replace_with_your_bucket_name"
+```
+
 ## Intervals
 
 Intervals are durations of time and can be specified for supporting settings by
@@ -263,8 +302,8 @@ The agent table configures Telegraf and the defaults used across all plugins.
   If set to true, do no set the "host" tag in the telegraf agent.
 
 - **snmp_translator**:
-  Method of translating SNMP objects. Can be "netsnmp" which
-  translates by calling external programs snmptranslate and snmptable,
+  Method of translating SNMP objects. Can be "netsnmp" (deprecated) which
+  translates by calling external programs `snmptranslate` and `snmptable`,
   or "gosmi" which translates using the built-in gosmi library.
 
 ## Plugins
@@ -429,8 +468,10 @@ input plugins and before any aggregator plugins.
 Parameters that can be used with any processor plugin:
 
 - **alias**: Name an instance of a plugin.
-- **order**: The order in which the processor(s) are executed. If this is not
-  specified then processor execution order will be random.
+- **order**: The order in which the processor(s) are executed. starting with 1.
+  If this is not specified then processor execution order will be the order in
+  the config. Processors without "order" will take precedence over those
+  with a defined order.
 
 The [metric filtering][] parameters can be used to limit what metrics are
 handled by the processor.  Excluded metrics are passed downstream to the next

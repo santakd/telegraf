@@ -31,6 +31,17 @@ var sampleConfig string
 
 const acceptHeader = `application/vnd.google.protobuf;proto=io.prometheus.client.MetricFamily;encoding=delimited;q=0.7,text/plain;version=0.0.4;q=0.3`
 
+type MonitorMethod string
+
+const (
+	MonitorMethodNone                   MonitorMethod = ""
+	MonitorMethodAnnotations            MonitorMethod = "annotations"
+	MonitorMethodSettings               MonitorMethod = "settings"
+	MonitorMethodSettingsAndAnnotations MonitorMethod = "settings+annotations"
+)
+
+type PodID string
+
 type Prometheus struct {
 	// An array of urls to scrape metrics from.
 	URLs []string `toml:"urls"`
@@ -58,6 +69,8 @@ type Prometheus struct {
 	Username string `toml:"username"`
 	Password string `toml:"password"`
 
+	HTTPHeaders map[string]string `toml:"http_headers"`
+
 	ResponseTimeout config.Duration `toml:"response_timeout"`
 
 	MetricVersion int `toml:"metric_version"`
@@ -81,7 +94,7 @@ type Prometheus struct {
 	PodNamespace          string `toml:"monitor_kubernetes_pods_namespace"`
 	PodNamespaceLabelName string `toml:"pod_namespace_label_name"`
 	lock                  sync.Mutex
-	kubernetesPods        map[string]URLAndAddress
+	kubernetesPods        map[PodID]URLAndAddress
 	cancel                context.CancelFunc
 	wg                    sync.WaitGroup
 
@@ -89,6 +102,11 @@ type Prometheus struct {
 	podLabelSelector  labels.Selector
 	podFieldSelector  fields.Selector
 	isNodeScrapeScope bool
+
+	MonitorKubernetesPodsMethod MonitorMethod `toml:"monitor_kubernetes_pods_method"`
+	MonitorKubernetesPodsScheme string        `toml:"monitor_kubernetes_pods_scheme"`
+	MonitorKubernetesPodsPath   string        `toml:"monitor_kubernetes_pods_path"`
+	MonitorKubernetesPodsPort   int           `toml:"monitor_kubernetes_pods_port"`
 
 	// Only for monitor_kubernetes_pods=true
 	CacheRefreshInterval int `toml:"cache_refresh_interval"`
@@ -118,7 +136,14 @@ func (p *Prometheus) Init() error {
 
 			p.NodeIP = envVarNodeIP
 		}
+		p.Log.Infof("Using pod scrape scope at node level to get pod list using cAdvisor.")
+	}
 
+	if p.MonitorKubernetesPodsMethod == MonitorMethodNone {
+		p.MonitorKubernetesPodsMethod = MonitorMethodAnnotations
+	}
+
+	if p.isNodeScrapeScope || p.MonitorKubernetesPodsMethod != MonitorMethodAnnotations {
 		// Parse label and field selectors - will be used to filter pods after cAdvisor call
 		var err error
 		p.podLabelSelector, err = labels.Parse(p.KubernetesLabelSelector)
@@ -134,11 +159,11 @@ func (p *Prometheus) Init() error {
 			return fmt.Errorf("the field selector %s is not supported for pods", invalidSelector)
 		}
 
-		p.Log.Infof("Using pod scrape scope at node level to get pod list using cAdvisor.")
 		p.Log.Infof("Using the label selector: %v and field selector: %v", p.podLabelSelector, p.podFieldSelector)
 	}
 
 	ctx := context.Background()
+	p.HTTPClientConfig.Timeout = p.ResponseTimeout
 	client, err := p.HTTPClientConfig.CreateClient(ctx, p.Log)
 	if err != nil {
 		return err
@@ -179,7 +204,7 @@ type URLAndAddress struct {
 }
 
 func (p *Prometheus) GetAllURLs() (map[string]URLAndAddress, error) {
-	allURLs := make(map[string]URLAndAddress)
+	allURLs := make(map[string]URLAndAddress, len(p.URLs)+len(p.consulServices)+len(p.kubernetesPods))
 	for _, u := range p.URLs {
 		address, err := url.Parse(u)
 		if err != nil {
@@ -196,8 +221,8 @@ func (p *Prometheus) GetAllURLs() (map[string]URLAndAddress, error) {
 		allURLs[k] = v
 	}
 	// loop through all pods scraped via the prometheus annotation on the pods
-	for k, v := range p.kubernetesPods {
-		allURLs[k] = v
+	for _, v := range p.kubernetesPods {
+		allURLs[v.URL.String()] = v
 	}
 
 	for _, service := range p.KubernetesServices {
@@ -296,6 +321,12 @@ func (p *Prometheus) gatherURL(u URLAndAddress, acc telegraf.Accumulator) error 
 		req.Header.Set("Authorization", "Bearer "+p.BearerTokenString)
 	} else if p.Username != "" || p.Password != "" {
 		req.SetBasicAuth(p.Username, p.Password)
+	}
+
+	if p.HTTPHeaders != nil {
+		for key, value := range p.HTTPHeaders {
+			req.Header.Add(key, value)
+		}
 	}
 
 	var resp *http.Response
@@ -424,7 +455,7 @@ func init() {
 	inputs.Add("prometheus", func() telegraf.Input {
 		return &Prometheus{
 			ResponseTimeout: config.Duration(time.Second * 3),
-			kubernetesPods:  map[string]URLAndAddress{},
+			kubernetesPods:  map[PodID]URLAndAddress{},
 			consulServices:  map[string]URLAndAddress{},
 			URLTag:          "url",
 		}

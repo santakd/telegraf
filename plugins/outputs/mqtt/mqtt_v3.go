@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	// Library that supports v3.1.1
-	mqttv3 "github.com/eclipse/paho.mqtt.golang"
+	mqttv3 "github.com/eclipse/paho.mqtt.golang" // Library that supports v3.1.1
+
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
 )
@@ -31,7 +31,11 @@ func (m *mqttv311Client) Connect() error {
 	if m.ClientID != "" {
 		opts.SetClientID(m.ClientID)
 	} else {
-		opts.SetClientID("Telegraf-Output-" + internal.RandomString(5))
+		randomString, err := internal.RandomString(5)
+		if err != nil {
+			return fmt.Errorf("generating random string for client ID failed: %w", err)
+		}
+		opts.SetClientID("Telegraf-Output-" + randomString)
 	}
 
 	tlsCfg, err := m.ClientConfig.TLSConfig()
@@ -40,13 +44,21 @@ func (m *mqttv311Client) Connect() error {
 	}
 	opts.SetTLSConfig(tlsCfg)
 
-	user := m.Username
-	if user != "" {
-		opts.SetUsername(user)
+	if !m.Username.Empty() {
+		user, err := m.Username.Get()
+		if err != nil {
+			return fmt.Errorf("getting username failed: %w", err)
+		}
+		opts.SetUsername(string(user))
+		config.ReleaseSecret(user)
 	}
-	password := m.Password
-	if password != "" {
-		opts.SetPassword(password)
+	if !m.Password.Empty() {
+		password, err := m.Password.Get()
+		if err != nil {
+			return fmt.Errorf("getting password failed: %w", err)
+		}
+		opts.SetPassword(string(password))
+		config.ReleaseSecret(password)
 	}
 
 	if len(m.Servers) == 0 {

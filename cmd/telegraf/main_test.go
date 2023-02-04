@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +19,26 @@ import (
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
+var secrets = map[string]map[string][]byte{
+	"yoda": {
+		"episode1": []byte("member"),
+		"episode2": []byte("member"),
+		"episode3": []byte("member"),
+	},
+	"mace_windu": {
+		"episode1": []byte("member"),
+		"episode2": []byte("member"),
+		"episode3": []byte("member"),
+	},
+	"oppo_rancisis": {
+		"episode1": []byte("member"),
+		"episode2": []byte("member"),
+	},
+	"coleman_kcaj": {
+		"episode3": []byte("member"),
+	},
+}
+
 type MockTelegraf struct {
 	GlobalFlags
 	WindowFlags
@@ -27,13 +48,72 @@ func NewMockTelegraf() *MockTelegraf {
 	return &MockTelegraf{}
 }
 
-func (m *MockTelegraf) Init(serverErr <-chan error, f Filters, g GlobalFlags, w WindowFlags) {
+func (m *MockTelegraf) Init(_ <-chan error, _ Filters, g GlobalFlags, w WindowFlags) {
 	m.GlobalFlags = g
 	m.WindowFlags = w
 }
 
 func (m *MockTelegraf) Run() error {
 	return nil
+}
+
+func (m *MockTelegraf) ListSecretStores() ([]string, error) {
+	ids := make([]string, 0, len(secrets))
+	for k := range secrets {
+		ids = append(ids, k)
+	}
+	return ids, nil
+}
+
+func (m *MockTelegraf) GetSecretStore(id string) (telegraf.SecretStore, error) {
+	v, found := secrets[id]
+	if !found {
+		return nil, errors.New("unknown secret store")
+	}
+	s := &MockSecretStore{Secrets: v}
+	return s, nil
+}
+
+type MockSecretStore struct {
+	Secrets map[string][]byte
+}
+
+func (s *MockSecretStore) Init() error {
+	return nil
+}
+
+func (s *MockSecretStore) SampleConfig() string {
+	return "I'm just a dummy"
+}
+
+func (s *MockSecretStore) Get(key string) ([]byte, error) {
+	v, found := s.Secrets[key]
+	if !found {
+		return nil, errors.New("not found")
+	}
+	return v, nil
+}
+
+func (s *MockSecretStore) Set(key, value string) error {
+	if strings.HasPrefix(key, "darth") {
+		return errors.New("don't join the dark side")
+	}
+	s.Secrets[key] = []byte(value)
+	return nil
+}
+func (s *MockSecretStore) List() ([]string, error) {
+	keys := make([]string, 0, len(s.Secrets))
+	for k := range s.Secrets {
+		keys = append(keys, k)
+	}
+	return keys, nil
+}
+
+func (s *MockSecretStore) GetResolver(key string) (telegraf.ResolveFunc, error) {
+	return func() ([]byte, bool, error) {
+		v, err := s.Get(key)
+		return v, false, err
+	}, nil
 }
 
 type MockConfig struct {
@@ -47,7 +127,7 @@ func NewMockConfig(buffer io.Writer) *MockConfig {
 	}
 }
 
-func (m *MockConfig) CollectDeprecationInfos(inFilter, outFilter, aggFilter, procFilter []string) map[string][]config.PluginDeprecationInfo {
+func (m *MockConfig) CollectDeprecationInfos(_, _, _, _ []string) map[string][]config.PluginDeprecationInfo {
 	return m.ExpectedDeprecatedPlugins
 }
 
@@ -65,7 +145,7 @@ func NewMockServer() *MockServer {
 	return &MockServer{}
 }
 
-func (m *MockServer) Start(address string) {
+func (m *MockServer) Start(_ string) {
 	m.Address = "localhost:6060"
 }
 
