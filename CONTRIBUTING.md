@@ -54,7 +54,7 @@ Check out our [guidelines](/docs/EXTERNAL_PLUGINS.md#external-plugin-guidelines)
 ## Security Vulnerability Reporting
 
 InfluxData takes security and our users' trust very seriously. If you believe you have found a security issue in any of our
-open source projects, please responsibly disclose it by contacting security@influxdata.com. More details about
+open source projects, please responsibly disclose it by contacting `security@influxdata.com`. More details about
 security vulnerability reporting,
 including our GPG key, [can be found here](https://www.influxdata.com/how-to-report-security-vulnerabilities/).
 
@@ -66,11 +66,12 @@ Telegraf uses Go modules. Assuming you can already build the project, run this i
 
 1. `go get github.com/[dependency]/[new-package]`
 
-**Unit Tests:**
+**Before opening a PR:**
 
-Before opening a pull request you should run the following checks to make sure the CI will pass.
+Before opening a pull request you should run the following checks locally to make sure the CI will pass.
 
 ```shell
+make lint
 make check
 make check-deps
 make test

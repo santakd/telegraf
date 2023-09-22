@@ -11,7 +11,6 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 	"github.com/influxdata/telegraf/selfstat"
 )
 
@@ -44,7 +43,7 @@ type TCPListener struct {
 	// track current connections so we can close them in Stop()
 	conns map[string]*net.TCPConn
 
-	parser parsers.Parser
+	parser telegraf.Parser
 	acc    telegraf.Accumulator
 
 	MaxConnections     selfstat.Stat
@@ -73,7 +72,7 @@ func (t *TCPListener) Gather(_ telegraf.Accumulator) error {
 	return nil
 }
 
-func (t *TCPListener) SetParser(parser parsers.Parser) {
+func (t *TCPListener) SetParser(parser telegraf.Parser) {
 	t.parser = parser
 }
 
@@ -127,8 +126,7 @@ func (t *TCPListener) Stop() {
 	t.Lock()
 	defer t.Unlock()
 	close(t.done)
-	// Ignore the returned error as we cannot do anything about it anyway
-	//nolint:errcheck,revive
+
 	t.listener.Close()
 
 	// Close all open TCP connections
@@ -142,8 +140,6 @@ func (t *TCPListener) Stop() {
 	}
 	t.cleanup.Unlock()
 	for _, conn := range conns {
-		// Ignore the returned error as we cannot do anything about it anyway
-		//nolint:errcheck,revive
 		conn.Close()
 	}
 
@@ -196,7 +192,7 @@ func (t *TCPListener) refuser(conn *net.TCPConn) {
 	fmt.Fprintf(conn, "Telegraf maximum concurrent TCP connections (%d)"+
 		" reached, closing.\nYou may want to increase max_tcp_connections in"+
 		" the Telegraf tcp listener configuration.\n", t.MaxTCPConnections)
-	//nolint:errcheck,revive
+
 	conn.Close()
 	t.Log.Infof("Refused TCP Connection from %s", conn.RemoteAddr())
 	t.Log.Warn("Maximum TCP Connections reached, you may want to adjust max_tcp_connections")

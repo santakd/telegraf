@@ -14,6 +14,15 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username` and
+`password` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -200,7 +209,7 @@ This example group configuration has three groups with two nodes each:
       name = "name"
       identifier = "1002"
       default_tags = {node1_tag = "val3"}
-  
+
   # Group 2
   [[inputs.opcua.group]]
     name = "group2_metric_name"
@@ -214,7 +223,7 @@ This example group configuration has three groups with two nodes each:
     [[inputs.opcua.group.nodes]]
       name = "sin"
       identifier = "1004"
-  
+
   # Group 3
   [[inputs.opcua.group]]
     name = "group3_metric_name"

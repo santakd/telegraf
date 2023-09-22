@@ -34,7 +34,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   response_timeout = "5s"
 ```
 
-## Measurements & Fields
+## Metrics
 
 - Measurement
   - accepts
@@ -69,7 +69,6 @@ When run with:
 
 It produces:
 
-```shell
-* Plugin: nginx, Collection 1
-> nginx,port=80,server=localhost accepts=605i,active=2i,handled=605i,reading=0i,requests=12132i,waiting=1i,writing=1i 1456690994701784331
+```text
+nginx,port=80,server=localhost accepts=605i,active=2i,handled=605i,reading=0i,requests=12132i,waiting=1i,writing=1i 1456690994701784331
 ```

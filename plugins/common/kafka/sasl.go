@@ -9,10 +9,11 @@ import (
 )
 
 type SASLAuth struct {
-	SASLUsername  config.Secret `toml:"sasl_username"`
-	SASLPassword  config.Secret `toml:"sasl_password"`
-	SASLMechanism string        `toml:"sasl_mechanism"`
-	SASLVersion   *int          `toml:"sasl_version"`
+	SASLUsername   config.Secret     `toml:"sasl_username"`
+	SASLPassword   config.Secret     `toml:"sasl_password"`
+	SASLExtentions map[string]string `toml:"sasl_extensions"`
+	SASLMechanism  string            `toml:"sasl_mechanism"`
+	SASLVersion    *int              `toml:"sasl_version"`
 
 	// GSSAPI config
 	SASLGSSAPIServiceName        string `toml:"sasl_gssapi_service_name"`
@@ -22,7 +23,7 @@ type SASLAuth struct {
 	SASLGSSAPIKeyTabPath         string `toml:"sasl_gssapi_key_tab_path"`
 	SASLGSSAPIRealm              string `toml:"sasl_gssapi_realm"`
 
-	// OAUTHBEARER config. experimental. undoubtedly this is not good enough.
+	// OAUTHBEARER config
 	SASLAccessToken config.Secret `toml:"sasl_access_token"`
 }
 
@@ -32,14 +33,14 @@ func (k *SASLAuth) SetSASLConfig(cfg *sarama.Config) error {
 	if err != nil {
 		return fmt.Errorf("getting username failed: %w", err)
 	}
-	defer config.ReleaseSecret(username)
+	cfg.Net.SASL.User = string(username)
+	config.ReleaseSecret(username)
 	password, err := k.SASLPassword.Get()
 	if err != nil {
 		return fmt.Errorf("getting password failed: %w", err)
 	}
-	defer config.ReleaseSecret(password)
-	cfg.Net.SASL.User = string(username)
 	cfg.Net.SASL.Password = string(password)
+	config.ReleaseSecret(password)
 
 	if k.SASLMechanism != "" {
 		cfg.Net.SASL.Mechanism = sarama.SASLMechanism(k.SASLMechanism)
@@ -91,7 +92,7 @@ func (k *SASLAuth) Token() (*sarama.AccessToken, error) {
 	defer config.ReleaseSecret(token)
 	return &sarama.AccessToken{
 		Token:      string(token),
-		Extensions: map[string]string{},
+		Extensions: k.SASLExtentions,
 	}, nil
 }
 

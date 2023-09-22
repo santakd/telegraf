@@ -2,13 +2,15 @@ package config
 
 import (
 	"errors"
-	"os"
+	"fmt"
 	"testing"
 
 	"github.com/awnumar/memguard"
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/stretchr/testify/require"
+	"github.com/influxdata/telegraf/plugins/secretstores"
 )
 
 func TestSecretConstantManually(t *testing.T) {
@@ -95,7 +97,7 @@ func TestUninitializedEnclave(t *testing.T) {
 	retrieved, err := s.Get()
 	require.NoError(t, err)
 	require.Empty(t, retrieved)
-	defer ReleaseSecret(retrieved)
+	ReleaseSecret(retrieved)
 }
 
 func TestEnclaveOpenError(t *testing.T) {
@@ -323,7 +325,7 @@ func TestSecretEnvironmentVariable(t *testing.T) {
 [[inputs.mockup]]
 	secret = "$SOME_ENV_SECRET"
 `)
-	require.NoError(t, os.Setenv("SOME_ENV_SECRET", "an env secret"))
+	t.Setenv("SOME_ENV_SECRET", "an env secret")
 
 	c := NewConfig()
 	err := c.LoadConfigData(cfg)
@@ -479,6 +481,8 @@ func TestSecretStoreInvalidReference(t *testing.T) {
 }
 
 func TestSecretStoreStaticChanging(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
 	cfg := []byte(
 		`
 [[inputs.mockup]]
@@ -519,6 +523,8 @@ func TestSecretStoreStaticChanging(t *testing.T) {
 }
 
 func TestSecretStoreDynamic(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
 	cfg := []byte(
 		`
 [[inputs.mockup]]
@@ -550,6 +556,143 @@ func TestSecretStoreDynamic(t *testing.T) {
 		require.EqualValues(t, v, secret)
 		ReleaseSecret(secret)
 	}
+}
+
+func TestSecretStoreDeclarationMissingID(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
+	cfg := []byte(`[[secretstores.mockup]]`)
+
+	c := NewConfig()
+	err := c.LoadConfigData(cfg)
+	require.ErrorContains(t, err, `error parsing mockup, "mockup" secret-store without ID`)
+}
+
+func TestSecretStoreDeclarationInvalidID(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
+	invalidIDs := []string{"foo.bar", "dummy-123", "test!", "wohoo+"}
+	tmpl := `
+  [[secretstores.mockup]]
+    id = %q
+`
+	for _, id := range invalidIDs {
+		t.Run(id, func(t *testing.T) {
+			cfg := []byte(fmt.Sprintf(tmpl, id))
+			c := NewConfig()
+			err := c.LoadConfigData(cfg)
+			require.ErrorContains(t, err, `error parsing mockup, invalid secret-store ID`)
+		})
+	}
+}
+
+func TestSecretStoreDeclarationValidID(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
+	validIDs := []string{"foobar", "dummy123", "test_id", "W0Hoo_lala123"}
+	tmpl := `
+  [[secretstores.mockup]]
+    id = %q
+`
+	for _, id := range validIDs {
+		t.Run(id, func(t *testing.T) {
+			cfg := []byte(fmt.Sprintf(tmpl, id))
+			c := NewConfig()
+			err := c.LoadConfigData(cfg)
+			require.NoError(t, err)
+		})
+	}
+}
+
+func TestSecretSet(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
+	cfg := []byte(`
+      [[inputs.mockup]]
+	    secret = "a secret"
+	`)
+	c := NewConfig()
+	require.NoError(t, c.LoadConfigData(cfg))
+	require.Len(t, c.Inputs, 1)
+	require.NoError(t, c.LinkSecrets())
+
+	plugin := c.Inputs[0].Input.(*MockupSecretPlugin)
+
+	secret, err := plugin.Secret.Get()
+	require.NoError(t, err)
+	defer ReleaseSecret(secret)
+	require.EqualValues(t, "a secret", string(secret))
+
+	require.NoError(t, plugin.Secret.Set([]byte("another secret")))
+	newsecret, err := plugin.Secret.Get()
+	require.NoError(t, err)
+	defer ReleaseSecret(newsecret)
+	require.EqualValues(t, "another secret", string(newsecret))
+}
+
+func TestSecretSetResolve(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
+	cfg := []byte(`
+      [[inputs.mockup]]
+	    secret = "@{mock:secret}"
+	`)
+	c := NewConfig()
+	require.NoError(t, c.LoadConfigData(cfg))
+	require.Len(t, c.Inputs, 1)
+
+	// Create a mockup secretstore
+	store := &MockupSecretStore{
+		Secrets: map[string][]byte{"secret": []byte("Ood Bnar")},
+		Dynamic: true,
+	}
+	require.NoError(t, store.Init())
+	c.SecretStores["mock"] = store
+	require.NoError(t, c.LinkSecrets())
+
+	plugin := c.Inputs[0].Input.(*MockupSecretPlugin)
+
+	secret, err := plugin.Secret.Get()
+	require.NoError(t, err)
+	defer ReleaseSecret(secret)
+	require.EqualValues(t, "Ood Bnar", string(secret))
+
+	require.NoError(t, plugin.Secret.Set([]byte("@{mock:secret} is cool")))
+	newsecret, err := plugin.Secret.Get()
+	require.NoError(t, err)
+	defer ReleaseSecret(newsecret)
+	require.EqualValues(t, "Ood Bnar is cool", string(newsecret))
+}
+
+func TestSecretSetResolveInvalid(t *testing.T) {
+	defer func() { unlinkedSecrets = make([]*Secret, 0) }()
+
+	cfg := []byte(`
+      [[inputs.mockup]]
+	    secret = "@{mock:secret}"
+	`)
+	c := NewConfig()
+	require.NoError(t, c.LoadConfigData(cfg))
+	require.Len(t, c.Inputs, 1)
+
+	// Create a mockup secretstore
+	store := &MockupSecretStore{
+		Secrets: map[string][]byte{"secret": []byte("Ood Bnar")},
+		Dynamic: true,
+	}
+	require.NoError(t, store.Init())
+	c.SecretStores["mock"] = store
+	require.NoError(t, c.LinkSecrets())
+
+	plugin := c.Inputs[0].Input.(*MockupSecretPlugin)
+
+	secret, err := plugin.Secret.Get()
+	require.NoError(t, err)
+	defer ReleaseSecret(secret)
+	require.EqualValues(t, "Ood Bnar", string(secret))
+
+	err = plugin.Secret.Set([]byte("@{mock:another_secret}"))
+	require.ErrorContains(t, err, `linking new secrets failed: unlinked part "@{mock:another_secret}"`)
 }
 
 /*** Mockup (input) plugin for testing to avoid cyclic dependencies ***/
@@ -604,4 +747,7 @@ func (s *MockupSecretStore) GetResolver(key string) (telegraf.ResolveFunc, error
 func init() {
 	// Register the mockup input plugin for the required names
 	inputs.Add("mockup", func() telegraf.Input { return &MockupSecretPlugin{} })
+	secretstores.Add("mockup", func(id string) telegraf.SecretStore {
+		return &MockupSecretStore{}
+	})
 }

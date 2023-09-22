@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/sdk/metric"
@@ -49,15 +51,16 @@ func TestOpenTelemetry(t *testing.T) {
 	// set a metric value
 
 	meter := mp.Meter("library-name")
-	counter, err := meter.SyncInt64().Counter("measurement-counter")
+	counter, err := meter.Int64Counter("measurement-counter")
 	require.NoError(t, err)
 	counter.Add(ctx, 7)
 
 	// write metrics through the telegraf OpenTelemetry input plugin
 
-	rm, err := reader.Collect(ctx)
+	var rm metricdata.ResourceMetrics
+	err = reader.Collect(ctx, &rm)
 	require.NoError(t, err)
-	require.NoError(t, metricExporter.Export(ctx, rm))
+	require.NoError(t, metricExporter.Export(ctx, &rm))
 
 	// Shutdown
 

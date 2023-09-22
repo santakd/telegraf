@@ -41,6 +41,8 @@ type Postgresql struct {
 	ForeignTagConstraint       bool                    `toml:"foreign_tag_constraint"`
 	TagsAsJsonb                bool                    `toml:"tags_as_jsonb"`
 	FieldsAsJsonb              bool                    `toml:"fields_as_jsonb"`
+	TimestampColumnName        string                  `toml:"timestamp_column_name"`
+	TimestampColumnType        string                  `toml:"timestamp_column_type"`
 	CreateTemplates            []*sqltemplate.Template `toml:"create_templates"`
 	AddColumnTemplates         []*sqltemplate.Template `toml:"add_column_templates"`
 	TagTableCreateTemplates    []*sqltemplate.Template `toml:"tag_table_create_templates"`
@@ -49,6 +51,7 @@ type Postgresql struct {
 	RetryMaxBackoff            config.Duration         `toml:"retry_max_backoff"`
 	TagCacheSize               int                     `toml:"tag_cache_size"`
 	LogLevel                   string                  `toml:"log_level"`
+	Logger                     telegraf.Logger         `toml:"-"`
 
 	dbContext       context.Context
 	dbContextCancel func()
@@ -62,7 +65,11 @@ type Postgresql struct {
 	writeChan      chan *TableSource
 	writeWaitGroup *utils.WaitGroup
 
-	Logger telegraf.Logger `toml:"-"`
+	// Column types
+	timeColumn       utils.Column
+	tagIDColumn      utils.Column
+	fieldsJSONColumn utils.Column
+	tagsJSONColumn   utils.Column
 }
 
 func init() {
@@ -98,6 +105,30 @@ func (p *Postgresql) Init() error {
 	if p.TagCacheSize < 0 {
 		return fmt.Errorf("invalid tag_cache_size")
 	}
+
+	// Set the time-column name
+	if p.TimestampColumnName == "" {
+		p.TimestampColumnName = "time"
+	}
+
+	switch p.TimestampColumnType {
+	case "":
+		p.TimestampColumnType = PgTimestampWithoutTimeZone
+	case PgTimestampWithoutTimeZone, PgTimestampWithTimeZone:
+	// do nothing for the valid choices
+	default:
+		return fmt.Errorf("unknown timestamp column type %q", p.TimestampColumnType)
+	}
+
+	// Initialize the column prototypes
+	p.timeColumn = utils.Column{
+		Name: p.TimestampColumnName,
+		Type: p.TimestampColumnType,
+		Role: utils.TimeColType,
+	}
+	p.tagIDColumn = utils.Column{Name: "tag_id", Type: PgBigInt, Role: utils.TagsIDColType}
+	p.fieldsJSONColumn = utils.Column{Name: "fields", Type: PgJSONb, Role: utils.FieldColType}
+	p.tagsJSONColumn = utils.Column{Name: "tags", Type: PgJSONb, Role: utils.TagColType}
 
 	var err error
 	if p.dbConfig, err = pgxpool.ParseConfig(p.Connection); err != nil {
@@ -240,7 +271,7 @@ func (p *Postgresql) writeSequential(tableSources map[string]*TableSource) error
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
-	defer tx.Rollback(p.dbContext) //nolint:errcheck
+	defer tx.Rollback(p.dbContext) //nolint:errcheck // In case of failure during commit, "err" from commit will be returned
 
 	for _, tableSource := range tableSources {
 		sp := tx
@@ -317,19 +348,16 @@ func isTempError(err error) bool {
 		errClass := pgErr.Code[:2]
 		switch errClass {
 		case "23": // Integrity Constraint Violation
-			switch pgErr.Code { //nolint:revive
-			case "23505": // unique_violation
-				if strings.Contains(err.Error(), "pg_type_typname_nsp_index") {
-					// Happens when you try to create 2 tables simultaneously.
-					return true
-				}
+			//23505 - unique_violation
+			if pgErr.Code == "23505" && strings.Contains(err.Error(), "pg_type_typname_nsp_index") {
+				// Happens when you try to create 2 tables simultaneously.
+				return true
 			}
 		case "25": // Invalid Transaction State
 			// If we're here, this is a bug, but recoverable
 			return true
 		case "40": // Transaction Rollback
-			switch pgErr.Code { //nolint:revive
-			case "40P01": // deadlock_detected
+			if pgErr.Code == "40P01" { // deadlock_detected
 				return true
 			}
 		case "42": // Syntax Error or Access Rule Violation
@@ -357,8 +385,9 @@ func isTempError(err error) bool {
 		return false
 	}
 
-	if err, ok := err.(interface{ Temporary() bool }); ok {
-		return err.Temporary()
+	var tempErr interface{ Temporary() bool }
+	if errors.As(err, &tempErr) {
+		return tempErr.Temporary()
 	}
 
 	// Assume that any other error is permanent.
@@ -401,13 +430,13 @@ func (p *Postgresql) writeMetricsFromMeasure(ctx context.Context, db dbh, tableS
 	}
 
 	if p.TagsAsForeignKeys {
-		if err := p.writeTagTable(ctx, db, tableSource); err != nil {
+		if err = p.writeTagTable(ctx, db, tableSource); err != nil {
 			if p.ForeignTagConstraint {
-				return fmt.Errorf("writing to tag table '%s': %s", tableSource.Name()+p.TagTableSuffix, err)
+				return fmt.Errorf("writing to tag table %q: %w", tableSource.Name()+p.TagTableSuffix, err)
 			}
 			// log and continue. As the admin can correct the issue, and tags don't change over time, they can be
 			// added from future metrics after issue is corrected.
-			p.Logger.Errorf("writing to tag table '%s': %s", tableSource.Name()+p.TagTableSuffix, err)
+			p.Logger.Errorf("writing to tag table %q: %s", tableSource.Name()+p.TagTableSuffix, err.Error())
 		}
 	}
 
@@ -433,7 +462,7 @@ func (p *Postgresql) writeTagTable(ctx context.Context, db dbh, tableSource *Tab
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(ctx) //nolint:errcheck // In case of failure during commit, "err" from commit will be returned
 
 	ident := pgx.Identifier{ttsrc.postgresql.Schema, ttsrc.Name()}
 	identTemp := pgx.Identifier{ttsrc.Name() + "_temp"}

@@ -19,7 +19,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 # Pulls statistics from nvidia GPUs attached to the host
 [[inputs.nvidia_smi]]
   ## Optional: path to nvidia-smi binary, defaults "/usr/bin/nvidia-smi"
-  ## We will first try to locate the nvidia-smi binary with the explicitly specified value (or default value), 
+  ## We will first try to locate the nvidia-smi binary with the explicitly specified value (or default value),
   ## if it is not found, we will try to locate it on PATH(exec.LookPath), if it is still not found, an error will be returned
   # bin_path = "/usr/bin/nvidia-smi"
 
@@ -57,6 +57,16 @@ Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe`
     - `memory_free` (integer, MiB)
     - `memory_used` (integer, MiB)
     - `memory_total` (integer, MiB)
+    - `memory_reserved` (integer, MiB)
+    - `retired_pages_multiple_single_bit` (integer)
+    - `retired_pages_double_bit` (integer)
+    - `retired_pages_blacklist` (string)
+    - `retired_pages_pending` (string)
+    - `remapped_rows_correctable` (int)
+    - `remapped_rows_uncorrectable` (int)
+    - `remapped_rows_pending` (string)
+    - `remapped_rows_pending` (string)
+    - `remapped_rows_failure` (string)
     - `power_draw` (float, W)
     - `temperature_gpu` (integer, degrees C)
     - `utilization_gpu` (integer, percentage)

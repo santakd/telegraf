@@ -4,6 +4,7 @@ package exec
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -21,7 +22,6 @@ import (
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/models"
 	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/parsers"
 	"github.com/influxdata/telegraf/plugins/parsers/nagios"
 )
 
@@ -39,7 +39,7 @@ type Exec struct {
 	Timeout     config.Duration `toml:"timeout"`
 	Log         telegraf.Logger `toml:"-"`
 
-	parser parsers.Parser
+	parser telegraf.Parser
 
 	runner Runner
 
@@ -68,7 +68,7 @@ func (c CommandRunner) Run(
 ) ([]byte, []byte, error) {
 	splitCmd, err := shellquote.Split(command)
 	if err != nil || len(splitCmd) == 0 {
-		return nil, nil, fmt.Errorf("exec: unable to parse command, %s", err)
+		return nil, nil, fmt.Errorf("exec: unable to parse command: %w", err)
 	}
 
 	cmd := osExec.Command(splitCmd[0], splitCmd[1:]...)
@@ -110,7 +110,7 @@ func (c CommandRunner) truncate(buf bytes.Buffer) bytes.Buffer {
 		buf.Truncate(i)
 	}
 	if didTruncate {
-		buf.WriteString("...") //nolint:revive // will always return nil or panic
+		buf.WriteString("...")
 	}
 	return buf
 }
@@ -126,7 +126,7 @@ func removeWindowsCarriageReturns(b bytes.Buffer) bytes.Buffer {
 			if len(byt) > 0 {
 				_, _ = buf.Write(byt)
 			}
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) {
 				return buf
 			}
 		}
@@ -143,7 +143,7 @@ func (e *Exec) ProcessCommand(command string, acc telegraf.Accumulator, wg *sync
 
 	out, errBuf, runErr := e.runner.Run(command, e.Environment, time.Duration(e.Timeout))
 	if !e.parseDespiteError && runErr != nil {
-		err := fmt.Errorf("exec: %s for command '%s': %s", runErr, command, string(errBuf))
+		err := fmt.Errorf("exec: %w for command %q: %s", runErr, command, string(errBuf))
 		acc.AddError(err)
 		return
 	}
@@ -163,7 +163,7 @@ func (e *Exec) ProcessCommand(command string, acc telegraf.Accumulator, wg *sync
 	}
 }
 
-func (e *Exec) SetParser(parser parsers.Parser) {
+func (e *Exec) SetParser(parser telegraf.Parser) {
 	e.parser = parser
 	unwrapped, ok := parser.(*models.RunningParser)
 	if ok {
