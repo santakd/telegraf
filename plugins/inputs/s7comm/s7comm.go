@@ -8,7 +8,6 @@ import (
 	"hash/maphash"
 	"log" //nolint:depguard // Required for tracing connection issues
 	"net"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
@@ -25,7 +25,6 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-const maxRequestsPerBatch = 20
 const addressRegexp = `^(?P<area>[A-Z]+)(?P<no>[0-9]+)\.(?P<type>[A-Z]+)(?P<start>[0-9]+)(?:\.(?P<extra>.*))?$`
 
 var (
@@ -52,6 +51,12 @@ var (
 		"R":  0x08, // IEEE 754 real (32 bit)
 		// see https://support.industry.siemens.com/cs/document/36479/date_and_time-format-for-s7-?dti=0&lc=en-DE
 		"DT": 0x0F, // Date and time (7 byte)
+	}
+
+	connectionTypeMap = map[string]int{
+		"PD":    1,
+		"OP":    2,
+		"basic": 3,
 	}
 )
 
@@ -85,8 +90,10 @@ type S7comm struct {
 	Server          string             `toml:"server"`
 	Rack            int                `toml:"rack"`
 	Slot            int                `toml:"slot"`
+	ConnectionType  string             `toml:"connection_type"`
+	BatchMaxSize    int                `toml:"pdu_size"`
 	Timeout         config.Duration    `toml:"timeout"`
-	DebugConnection bool               `toml:"debug_connection"`
+	DebugConnection bool               `toml:"debug_connection" deprecated:"1.35.0;use 'log_level' 'trace' instead"`
 	Configs         []metricDefinition `toml:"metric"`
 	Log             telegraf.Logger    `toml:"-"`
 
@@ -113,6 +120,12 @@ func (s *S7comm) Init() error {
 	if s.Slot < 0 {
 		return errors.New("'slot' has to be specified")
 	}
+	if s.ConnectionType == "" {
+		s.ConnectionType = "PD"
+	}
+	if _, found := connectionTypeMap[s.ConnectionType]; !found {
+		return fmt.Errorf("invalid 'connection_type' %q", s.ConnectionType)
+	}
 	if len(s.Configs) == 0 {
 		return errors.New("no metric defined")
 	}
@@ -126,20 +139,25 @@ func (s *S7comm) Init() error {
 		s.Server += ":102"
 	}
 
+	// Create handler for the connection
+	s.handler = gos7.NewTCPClientHandlerWithConnectType(s.Server, s.Rack, s.Slot, connectionTypeMap[s.ConnectionType])
+	s.handler.Timeout = time.Duration(s.Timeout)
+	if s.Log.Level().Includes(telegraf.Trace) || s.DebugConnection { // for backward compatibility
+		s.handler.Logger = log.New(&tracelogger{log: s.Log}, "", 0)
+	}
+
 	// Create the requests
 	return s.createRequests()
 }
 
 // Start initializes the connection to the remote endpoint
 func (s *S7comm) Start(_ telegraf.Accumulator) error {
-	// Create handler for the connection
-	s.handler = gos7.NewTCPClientHandler(s.Server, s.Rack, s.Slot)
-	s.handler.Timeout = time.Duration(s.Timeout)
-	if s.DebugConnection {
-		s.handler.Logger = log.New(os.Stderr, "D! [inputs.s7comm]", log.LstdFlags)
-	}
+	s.Log.Debugf("Connecting to %q...", s.Server)
 	if err := s.handler.Connect(); err != nil {
-		return fmt.Errorf("connecting to %q failed: %w", s.Server, err)
+		return &internal.StartupError{
+			Err:   fmt.Errorf("connecting to %q failed: %w", s.Server, err),
+			Retry: true,
+		}
 	}
 	s.client = gos7.NewClient(s.handler)
 
@@ -149,6 +167,7 @@ func (s *S7comm) Start(_ telegraf.Accumulator) error {
 // Stop disconnects from the remote endpoint and cleans up
 func (s *S7comm) Stop() {
 	if s.handler != nil {
+		s.Log.Debugf("Disconnecting from %q...", s.handler.Address)
 		s.handler.Close()
 	}
 }
@@ -162,7 +181,11 @@ func (s *S7comm) Gather(acc telegraf.Accumulator) error {
 		// Read the batch
 		s.Log.Debugf("Reading batch %d...", i+1)
 		if err := s.client.AGReadMulti(b.items, len(b.items)); err != nil {
-			return fmt.Errorf("reading batch %d failed: %w", i+1, err)
+			// Try to reconnect and skip this gather cycle to avoid hammering
+			// the network if the server is down or under load.
+			s.Log.Errorf("reading batch %d failed: %v; reconnecting...", i+1, err)
+			s.Stop()
+			return s.Start(acc)
 		}
 
 		// Dissect the received data into fields
@@ -223,16 +246,13 @@ func (s *S7comm) createRequests() error {
 			current.mappings = append(current.mappings, m)
 
 			// If the batch is full, start a new one
-			if len(current.items) == maxRequestsPerBatch {
+			if len(current.items) == s.BatchMaxSize {
 				s.batches = append(s.batches, current)
 				current = batch{}
 			}
 
 			// Check for duplicate field definitions
-			id, err := fieldID(seed, cfg, f)
-			if err != nil {
-				return fmt.Errorf("cannot determine field id for %q: %w", f.Name, err)
-			}
+			id := fieldID(seed, cfg, f)
 			if seenFields[id] {
 				return fmt.Errorf("duplicate field definition field %q in metric %q", f.Name, cfg.Name)
 			}
@@ -301,9 +321,9 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	}
 
 	// Check the amount parameter if any
-	var extra int
+	var extra, bit int
 	switch dtype {
-	case "X", "S":
+	case "S":
 		// We require an extra parameter
 		x := groups["extra"]
 		if x == "" {
@@ -316,6 +336,21 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 		}
 		if extra < 1 {
 			return nil, nil, fmt.Errorf("invalid extra parameter %d", extra)
+		}
+	case "X":
+		// We require an extra parameter
+		x := groups["extra"]
+		if x == "" {
+			return nil, nil, errors.New("extra parameter required")
+		}
+
+		bit, err = strconv.Atoi(x)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid extra parameter: %w", err)
+		}
+		if bit < 0 || bit > 7 {
+			// Ensure bit address is valid
+			return nil, nil, fmt.Errorf("invalid extra parameter: bit address %d out of range", bit)
 		}
 	default:
 		if groups["extra"] != "" {
@@ -348,6 +383,7 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	item := &gos7.S7DataItem{
 		Area:     area,
 		WordLen:  wordlen,
+		Bit:      bit,
 		DBNumber: areaidx,
 		Start:    start,
 		Amount:   amount,
@@ -355,56 +391,49 @@ func handleFieldAddress(address string) (*gos7.S7DataItem, converterFunc, error)
 	}
 
 	// Determine the type converter function
-	f := determineConversion(dtype, extra)
+	f := determineConversion(dtype)
 	return item, f, nil
 }
 
-func fieldID(seed maphash.Seed, def metricDefinition, field metricFieldDefinition) (uint64, error) {
+func fieldID(seed maphash.Seed, def metricDefinition, field metricFieldDefinition) uint64 {
 	var mh maphash.Hash
 	mh.SetSeed(seed)
 
-	if _, err := mh.WriteString(def.Name); err != nil {
-		return 0, err
-	}
-	if err := mh.WriteByte(0); err != nil {
-		return 0, err
-	}
-	if _, err := mh.WriteString(field.Name); err != nil {
-		return 0, err
-	}
-	if err := mh.WriteByte(0); err != nil {
-		return 0, err
-	}
+	mh.WriteString(def.Name)
+	mh.WriteByte(0)
+	mh.WriteString(field.Name)
+	mh.WriteByte(0)
 
 	// Tags
 	for k, v := range def.Tags {
-		if _, err := mh.WriteString(k); err != nil {
-			return 0, err
-		}
-		if err := mh.WriteByte('='); err != nil {
-			return 0, err
-		}
-		if _, err := mh.WriteString(v); err != nil {
-			return 0, err
-		}
-		if err := mh.WriteByte(':'); err != nil {
-			return 0, err
-		}
+		mh.WriteString(k)
+		mh.WriteByte('=')
+		mh.WriteString(v)
+		mh.WriteByte(':')
 	}
-	if err := mh.WriteByte(0); err != nil {
-		return 0, err
-	}
+	mh.WriteByte(0)
 
-	return mh.Sum64(), nil
+	return mh.Sum64()
+}
+
+// Logger for tracing internal messages
+type tracelogger struct {
+	log telegraf.Logger
+}
+
+func (l *tracelogger) Write(b []byte) (n int, err error) {
+	l.log.Trace(string(b))
+	return len(b), nil
 }
 
 // Add this plugin to telegraf
 func init() {
 	inputs.Add("s7comm", func() telegraf.Input {
 		return &S7comm{
-			Rack:    -1,
-			Slot:    -1,
-			Timeout: config.Duration(10 * time.Second),
+			Rack:         -1,
+			Slot:         -1,
+			BatchMaxSize: 20,
+			Timeout:      config.Duration(10 * time.Second),
 		}
 	})
 }

@@ -26,9 +26,9 @@ type message struct {
 }
 
 type MQTT struct {
-	TopicPrefix     string          `toml:"topic_prefix" deprecated:"1.25.0;use 'topic' instead"`
+	TopicPrefix     string          `toml:"topic_prefix" deprecated:"1.25.0;1.35.0;use 'topic' instead"`
 	Topic           string          `toml:"topic"`
-	BatchMessage    bool            `toml:"batch" deprecated:"1.25.2;use 'layout = \"batch\"' instead"`
+	BatchMessage    bool            `toml:"batch" deprecated:"1.25.2;1.35.0;use 'layout = \"batch\"' instead"`
 	Layout          string          `toml:"layout"`
 	HomieDeviceName string          `toml:"homie_device_name"`
 	HomieNodeID     string          `toml:"homie_node_id"`
@@ -129,8 +129,8 @@ func (m *MQTT) Close() error {
 	// to issue that "will" yet.
 	if len(m.homieSeen) > 0 {
 		for topic := range m.homieSeen {
-			// We will ignore potential errors as we cannot do anything here
-			_ = m.client.Publish(topic+"/$state", []byte("lost"))
+			//nolint:errcheck // We will ignore potential errors as we cannot do anything here
+			m.client.Publish(topic+"/$state", []byte("lost"))
 		}
 		// Give the messages some time to settle
 		time.Sleep(100 * time.Millisecond)
@@ -167,6 +167,11 @@ func (m *MQTT) Write(metrics []telegraf.Metric) error {
 
 	for _, msg := range topicMessages {
 		if err := m.client.Publish(msg.topic, msg.payload); err != nil {
+			// We do receive a timeout error if the remote broker is down,
+			// so let's retry the metrics in this case and drop them otherwise.
+			if errors.Is(err, internal.ErrTimeout) {
+				return fmt.Errorf("could not publish message to MQTT server: %w", err)
+			}
 			m.Log.Warnf("Could not publish message to MQTT server: %v", err)
 		}
 	}
@@ -264,15 +269,12 @@ func (m *MQTT) collectHomieV4(hostname string, metrics []telegraf.Metric) []mess
 		collection = append(collection, msgs...)
 
 		for _, tag := range metric.TagList() {
-			if err != nil {
-				m.Log.Warnf("Could not serialize metric for topic %q tag %q: %v", topic, tag.Key, err)
-				m.Log.Debugf("metric was: %v", metric)
-				continue
-			}
 			propID := normalizeID(tag.Key)
-			collection = append(collection, message{path + "/" + propID, []byte(tag.Value)})
-			collection = append(collection, message{path + "/" + propID + "/$name", []byte(tag.Key)})
-			collection = append(collection, message{path + "/" + propID + "/$datatype", []byte("string")})
+			collection = append(collection,
+				message{path + "/" + propID, []byte(tag.Value)},
+				message{path + "/" + propID + "/$name", []byte(tag.Key)},
+				message{path + "/" + propID + "/$datatype", []byte("string")},
+			)
 		}
 
 		for _, field := range metric.FieldList() {
@@ -283,9 +285,11 @@ func (m *MQTT) collectHomieV4(hostname string, metrics []telegraf.Metric) []mess
 				continue
 			}
 			propID := normalizeID(field.Key)
-			collection = append(collection, message{path + "/" + propID, []byte(v)})
-			collection = append(collection, message{path + "/" + propID + "/$name", []byte(field.Key)})
-			collection = append(collection, message{path + "/" + propID + "/$datatype", []byte(dt)})
+			collection = append(collection,
+				message{path + "/" + propID, []byte(v)},
+				message{path + "/" + propID + "/$name", []byte(field.Key)},
+				message{path + "/" + propID + "/$datatype", []byte(dt)},
+			)
 		}
 	}
 

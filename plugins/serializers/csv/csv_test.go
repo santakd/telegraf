@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
+	"github.com/influxdata/telegraf/plugins/serializers"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -65,6 +66,22 @@ func TestSerializeTransformationNonBatch(t *testing.T) {
 			name:     "header and semicolon",
 			filename: "testcases/semicolon.conf",
 		},
+		{
+			name:     "ordered without header",
+			filename: "testcases/ordered.conf",
+		},
+		{
+			name:     "ordered with header",
+			filename: "testcases/ordered_with_header.conf",
+		},
+		{
+			name:     "ordered with header and prefix",
+			filename: "testcases/ordered_with_header_prefix.conf",
+		},
+		{
+			name:     "ordered non-existing fields and tags",
+			filename: "testcases/ordered_not_exist.conf",
+		},
 	}
 	parser := &influx.Parser{}
 	require.NoError(t, parser.Init())
@@ -92,6 +109,7 @@ func TestSerializeTransformationNonBatch(t *testing.T) {
 				Separator:       cfg.Separator,
 				Header:          cfg.Header,
 				Prefix:          cfg.Prefix,
+				Columns:         cfg.Columns,
 			}
 			require.NoError(t, serializer.Init())
 			// expected results use LF endings
@@ -138,6 +156,22 @@ func TestSerializeTransformationBatch(t *testing.T) {
 			name:     "header and semicolon",
 			filename: "testcases/semicolon.conf",
 		},
+		{
+			name:     "ordered without header",
+			filename: "testcases/ordered.conf",
+		},
+		{
+			name:     "ordered with header",
+			filename: "testcases/ordered_with_header.conf",
+		},
+		{
+			name:     "ordered with header and prefix",
+			filename: "testcases/ordered_with_header_prefix.conf",
+		},
+		{
+			name:     "ordered non-existing fields and tags",
+			filename: "testcases/ordered_not_exist.conf",
+		},
 	}
 	parser := &influx.Parser{}
 	require.NoError(t, parser.Init())
@@ -165,6 +199,7 @@ func TestSerializeTransformationBatch(t *testing.T) {
 				Separator:       cfg.Separator,
 				Header:          cfg.Header,
 				Prefix:          cfg.Prefix,
+				Columns:         cfg.Columns,
 			}
 			require.NoError(t, serializer.Init())
 			// expected results use LF endings
@@ -200,4 +235,27 @@ func loadTestConfiguration(filename string) (*Config, []string, error) {
 
 func loadCSV(filename string) ([]byte, error) {
 	return os.ReadFile(filename)
+}
+
+func BenchmarkSerialize(b *testing.B) {
+	s := &Serializer{}
+	require.NoError(b, s.Init())
+	metrics := serializers.BenchmarkMetrics(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.Serialize(metrics[i%len(metrics)])
+		require.NoError(b, err)
+	}
+}
+
+func BenchmarkSerializeBatch(b *testing.B) {
+	s := &Serializer{}
+	require.NoError(b, s.Init())
+	m := serializers.BenchmarkMetrics(b)
+	metrics := m[:]
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.SerializeBatch(metrics)
+		require.NoError(b, err)
+	}
 }

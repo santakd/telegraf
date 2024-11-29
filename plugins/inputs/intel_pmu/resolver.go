@@ -7,12 +7,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/influxdata/telegraf"
 	ia "github.com/intel/iaevents"
+
+	"github.com/influxdata/telegraf"
 )
 
 type entitiesResolver interface {
-	resolveEntities(coreEntities []*CoreEventEntity, uncoreEntities []*UncoreEventEntity) error
+	resolveEntities(coreEntities []*coreEventEntity, uncoreEntities []*uncoreEventEntity) error
 }
 
 type iaEntitiesResolver struct {
@@ -21,10 +22,10 @@ type iaEntitiesResolver struct {
 	log         telegraf.Logger
 }
 
-func (e *iaEntitiesResolver) resolveEntities(coreEntities []*CoreEventEntity, uncoreEntities []*UncoreEventEntity) error {
+func (e *iaEntitiesResolver) resolveEntities(coreEntities []*coreEventEntity, uncoreEntities []*uncoreEventEntity) error {
 	for _, entity := range coreEntities {
 		if entity == nil {
-			return fmt.Errorf("core entity is nil")
+			return errors.New("core entity is nil")
 		}
 		if entity.allEvents {
 			newEvents, _, err := e.resolveAllEvents()
@@ -36,7 +37,7 @@ func (e *iaEntitiesResolver) resolveEntities(coreEntities []*CoreEventEntity, un
 		}
 		for _, event := range entity.parsedEvents {
 			if event == nil {
-				return fmt.Errorf("parsed core event is nil")
+				return errors.New("parsed core event is nil")
 			}
 			customEvent, err := e.resolveEvent(event.name, event.qualifiers)
 			if err != nil {
@@ -50,7 +51,7 @@ func (e *iaEntitiesResolver) resolveEntities(coreEntities []*CoreEventEntity, un
 	}
 	for _, entity := range uncoreEntities {
 		if entity == nil {
-			return fmt.Errorf("uncore entity is nil")
+			return errors.New("uncore entity is nil")
 		}
 		if entity.allEvents {
 			_, newEvents, err := e.resolveAllEvents()
@@ -62,7 +63,7 @@ func (e *iaEntitiesResolver) resolveEntities(coreEntities []*CoreEventEntity, un
 		}
 		for _, event := range entity.parsedEvents {
 			if event == nil {
-				return fmt.Errorf("parsed uncore event is nil")
+				return errors.New("parsed uncore event is nil")
 			}
 			customEvent, err := e.resolveEvent(event.name, event.qualifiers)
 			if err != nil {
@@ -77,7 +78,7 @@ func (e *iaEntitiesResolver) resolveEntities(coreEntities []*CoreEventEntity, un
 	return nil
 }
 
-func (e *iaEntitiesResolver) resolveAllEvents() (coreEvents []*eventWithQuals, uncoreEvents []*eventWithQuals, err error) {
+func (e *iaEntitiesResolver) resolveAllEvents() (coreEvents, uncoreEvents []*eventWithQuals, err error) {
 	if e.transformer == nil {
 		return nil, nil, errors.New("transformer is nil")
 	}

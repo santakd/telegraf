@@ -1,7 +1,7 @@
 package codec
 
 import (
-	"fmt"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
@@ -96,10 +96,8 @@ func Test_minMax(t *testing.T) {
 			},
 		},
 		{
-			name: "No Annotations",
-			span: &MockSpan{
-				Anno: []Annotation{},
-			},
+			name:    "No Annotations",
+			span:    &MockSpan{},
 			wantMin: time.Unix(2, 0).UTC(),
 			wantMax: time.Unix(2, 0).UTC(),
 			now: func() time.Time {
@@ -253,7 +251,7 @@ func Test_parentID(t *testing.T) {
 		{
 			name: "bad parent value",
 			span: &MockSpan{
-				Error: fmt.Errorf("Mommie Dearest"),
+				Error: errors.New("mommie dearest"),
 			},
 			wantErr: true,
 		},
@@ -323,7 +321,7 @@ func Test_serviceEndpoint(t *testing.T) {
 					Val: "noop",
 				},
 			},
-			want: &DefaultEndpoint{},
+			want: &defaultEndpoint{},
 		},
 		{
 			name: "Binary annotation with local component",
@@ -459,8 +457,8 @@ func TestNewTrace(t *testing.T) {
 				trace.Span{
 					ServiceName:       "unknown",
 					Timestamp:         time.Unix(0, 0).UTC(),
-					Annotations:       []trace.Annotation{},
-					BinaryAnnotations: []trace.BinaryAnnotation{},
+					Annotations:       make([]trace.Annotation, 0),
+					BinaryAnnotations: make([]trace.BinaryAnnotation, 0),
 				},
 			},
 		},
@@ -468,7 +466,7 @@ func TestNewTrace(t *testing.T) {
 			name: "span has no id",
 			spans: []Span{
 				&MockSpan{
-					Error: fmt.Errorf("Span has no id"),
+					Error: errors.New("span has no id"),
 				},
 			},
 			wantErr: true,
@@ -515,7 +513,7 @@ func TestNewTrace(t *testing.T) {
 							ServiceName: "myname",
 						},
 					},
-					BinaryAnnotations: []trace.BinaryAnnotation{},
+					BinaryAnnotations: make([]trace.BinaryAnnotation, 0),
 				},
 			},
 		},

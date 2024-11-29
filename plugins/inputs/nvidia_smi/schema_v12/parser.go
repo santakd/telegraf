@@ -9,6 +9,7 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs/nvidia_smi/common"
 )
 
+// Parse parses the XML-encoded data from nvidia-smi and adds measurements.
 func Parse(acc telegraf.Accumulator, buf []byte) error {
 	var s smi
 	if err := xml.Unmarshal(buf, &s); err != nil {
@@ -22,11 +23,13 @@ func Parse(acc telegraf.Accumulator, buf []byte) error {
 		}
 	}
 
-	for i, gpu := range s.Gpu {
+	for i := range s.Gpu {
+		gpu := &s.Gpu[i]
+
 		tags := map[string]string{
 			"index": strconv.Itoa(i),
 		}
-		fields := map[string]interface{}{}
+		fields := make(map[string]interface{}, 44)
 
 		common.SetTagIfUsed(tags, "pstate", gpu.PerformanceState)
 		common.SetTagIfUsed(tags, "name", gpu.ProductName)
@@ -74,12 +77,14 @@ func Parse(acc telegraf.Accumulator, buf []byte) error {
 		common.SetIfUsed("int", fields, "clocks_current_memory", gpu.Clocks.MemClock)
 		common.SetIfUsed("int", fields, "clocks_current_video", gpu.Clocks.VideoClock)
 		common.SetIfUsed("float", fields, "power_draw", gpu.PowerReadings.PowerDraw)
+		common.SetIfUsed("float", fields, "power_limit", gpu.PowerReadings.PowerLimit)
 		common.SetIfUsed("float", fields, "power_draw", gpu.GpuPowerReadings.PowerDraw)
+		common.SetIfUsed("float", fields, "power_limit", gpu.GpuPowerReadings.PowerLimit)
 		common.SetIfUsed("float", fields, "module_power_draw", gpu.ModulePowerReadings.PowerDraw)
 		acc.AddFields("nvidia_smi", fields, tags, timestamp)
 
 		for _, device := range gpu.MigDevices.MigDevice {
-			tags := map[string]string{}
+			tags := make(map[string]string, 8)
 			common.SetTagIfUsed(tags, "index", device.Index)
 			common.SetTagIfUsed(tags, "gpu_index", device.GpuInstanceID)
 			common.SetTagIfUsed(tags, "compute_index", device.ComputeInstanceID)
@@ -89,7 +94,7 @@ func Parse(acc telegraf.Accumulator, buf []byte) error {
 			common.SetTagIfUsed(tags, "uuid", gpu.UUID)
 			common.SetTagIfUsed(tags, "compute_mode", gpu.ComputeMode)
 
-			fields := map[string]interface{}{}
+			fields := make(map[string]interface{}, 8)
 			common.SetIfUsed("int", fields, "sram_uncorrectable", device.EccErrorCount.VolatileCount.SramUncorrectable)
 			common.SetIfUsed("int", fields, "memory_fb_total", device.FbMemoryUsage.Total)
 			common.SetIfUsed("int", fields, "memory_fb_reserved", device.FbMemoryUsage.Reserved)
@@ -100,6 +105,18 @@ func Parse(acc telegraf.Accumulator, buf []byte) error {
 			common.SetIfUsed("int", fields, "memory_bar1_free", device.Bar1MemoryUsage.Free)
 
 			acc.AddFields("nvidia_smi_mig", fields, tags, timestamp)
+		}
+
+		for _, process := range gpu.Processes.ProcessInfo {
+			tags := make(map[string]string, 2)
+			common.SetTagIfUsed(tags, "name", process.ProcessName)
+			common.SetTagIfUsed(tags, "type", process.Type)
+
+			fields := make(map[string]interface{}, 2)
+			common.SetIfUsed("int", fields, "pid", process.Pid)
+			common.SetIfUsed("int", fields, "used_memory", process.UsedMemory)
+
+			acc.AddFields("nvidia_smi_process", fields, tags, timestamp)
 		}
 	}
 

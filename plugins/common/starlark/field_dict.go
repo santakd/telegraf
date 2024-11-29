@@ -97,7 +97,7 @@ func (d FieldDict) Get(key starlark.Value) (v starlark.Value, found bool, err er
 // using x[k]=v syntax, like a dictionary.
 func (d FieldDict) SetKey(k, v starlark.Value) error {
 	if d.fieldIterCount > 0 {
-		return fmt.Errorf("cannot insert during iteration")
+		return errors.New("cannot insert during iteration")
 	}
 
 	key, ok := k.(starlark.String)
@@ -131,7 +131,7 @@ func (d FieldDict) Items() []starlark.Tuple {
 
 func (d FieldDict) Clear() error {
 	if d.fieldIterCount > 0 {
-		return fmt.Errorf("cannot delete during iteration")
+		return errors.New("cannot delete during iteration")
 	}
 
 	keys := make([]string, 0, len(d.metric.FieldList()))
@@ -147,7 +147,7 @@ func (d FieldDict) Clear() error {
 
 func (d FieldDict) PopItem() (starlark.Value, error) {
 	if d.fieldIterCount > 0 {
-		return nil, fmt.Errorf("cannot delete during iteration")
+		return nil, errors.New("cannot delete during iteration")
 	}
 
 	if len(d.metric.FieldList()) == 0 {
@@ -163,7 +163,7 @@ func (d FieldDict) PopItem() (starlark.Value, error) {
 	sk := starlark.String(k)
 	sv, err := asStarlarkValue(v)
 	if err != nil {
-		return nil, fmt.Errorf("could not convert to starlark value")
+		return nil, errors.New("could not convert to starlark value")
 	}
 
 	return starlark.Tuple{sk, sv}, nil
@@ -171,7 +171,7 @@ func (d FieldDict) PopItem() (starlark.Value, error) {
 
 func (d FieldDict) Delete(k starlark.Value) (v starlark.Value, found bool, err error) {
 	if d.fieldIterCount > 0 {
-		return nil, false, fmt.Errorf("cannot delete during iteration")
+		return nil, false, errors.New("cannot delete during iteration")
 	}
 
 	if key, ok := k.(starlark.String); ok {
@@ -260,7 +260,7 @@ func asStarlarkValue(value interface{}) (starlark.Value, error) {
 		return starlark.Bool(v.Bool()), nil
 	}
 
-	return starlark.None, errors.New("invalid type")
+	return nil, fmt.Errorf("invalid type %T", value)
 }
 
 // AsGoValue converts a starlark.Value to a field value.
@@ -271,7 +271,7 @@ func asGoValue(value interface{}) (interface{}, error) {
 	case starlark.Int:
 		n, ok := v.Int64()
 		if !ok {
-			return nil, errors.New("cannot represent integer as int64")
+			return nil, fmt.Errorf("cannot represent integer %v as int64", v)
 		}
 		return n, nil
 	case starlark.String:
@@ -280,7 +280,7 @@ func asGoValue(value interface{}) (interface{}, error) {
 		return bool(v), nil
 	}
 
-	return nil, errors.New("invalid starlark type")
+	return nil, fmt.Errorf("invalid starlark type %T", value)
 }
 
 // ToFields converts a starlark.Value to a map of values.

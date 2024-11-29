@@ -131,7 +131,7 @@ func TestMetricMissingTagsIsNotLost(t *testing.T) {
 
 	// assert
 	// make sure no metrics are lost when a template process fails
-	require.Equal(t, 2, len(actual), "Number of metrics input should equal number of metrics output")
+	require.Len(t, actual, 2, "Number of metrics input should equal number of metrics output")
 }
 
 func TestTagAndFieldConcatenate(t *testing.T) {
@@ -292,12 +292,16 @@ func TestTracking(t *testing.T) {
 	testutil.RequireMetricsEqual(t, expected, actual)
 
 	// Simulate output acknowledging delivery
-	input.Accept()
+	for _, m := range actual {
+		m.Accept()
+	}
+
+	// Check delivery
 
 	// Check delivery
 	require.Eventuallyf(t, func() bool {
 		mu.Lock()
 		defer mu.Unlock()
-		return len(delivered) > 0
+		return len(delivered) == 1
 	}, time.Second, 100*time.Millisecond, "%d delivered but 1 expected", len(delivered))
 }

@@ -3,6 +3,7 @@ package application_insights
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -46,7 +47,7 @@ func (*ApplicationInsights) SampleConfig() string {
 
 func (a *ApplicationInsights) Connect() error {
 	if a.InstrumentationKey == "" {
-		return fmt.Errorf("instrumentation key is required")
+		return errors.New("instrumentation key is required")
 	}
 
 	if a.transmitter == nil {
@@ -165,9 +166,13 @@ func (a *ApplicationInsights) createAggregateMetricTelemetry(metric telegraf.Met
 	// We attempt to set min, max, variance and stddev fields but do not really care if they are not present--
 	// they are not essential for aggregate metric.
 	// By convention AppInsights prefers stddev over variance, so to be consistent, we test for stddev after testing for variance.
+	//nolint:errcheck // see above
 	telemetry.Min, _ = getFloat64TelemetryPropertyValue([]string{"min"}, metric, &usedFields)
+	//nolint:errcheck // see above
 	telemetry.Max, _ = getFloat64TelemetryPropertyValue([]string{"max"}, metric, &usedFields)
+	//nolint:errcheck // see above
 	telemetry.Variance, _ = getFloat64TelemetryPropertyValue([]string{"variance"}, metric, &usedFields)
+	//nolint:errcheck // see above
 	telemetry.StdDev, _ = getFloat64TelemetryPropertyValue([]string{"stddev"}, metric, &usedFields)
 
 	return telemetry, usedFields
@@ -222,7 +227,7 @@ func getFloat64TelemetryPropertyValue(
 		return metricValue, nil
 	}
 
-	return 0.0, fmt.Errorf("no field from the candidate list was found in the metric")
+	return 0.0, errors.New("no field from the candidate list was found in the metric")
 }
 
 func getIntTelemetryPropertyValue(
@@ -248,7 +253,7 @@ func getIntTelemetryPropertyValue(
 		return metricValue, nil
 	}
 
-	return 0, fmt.Errorf("no field from the candidate list was found in the metric")
+	return 0, errors.New("no field from the candidate list was found in the metric")
 }
 
 func contains(set []string, val string) bool {

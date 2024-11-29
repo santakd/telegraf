@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Shopify/sarama"
+	"github.com/IBM/sarama"
 	"github.com/gofrs/uuid/v5"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/common/kafka"
 	"github.com/influxdata/telegraf/plugins/common/proxy"
 	"github.com/influxdata/telegraf/plugins/outputs"
@@ -30,15 +31,18 @@ var ValidTopicSuffixMethods = []string{
 var zeroTime = time.Unix(0, 0)
 
 type Kafka struct {
-	Brokers         []string    `toml:"brokers"`
-	Topic           string      `toml:"topic"`
-	TopicTag        string      `toml:"topic_tag"`
-	ExcludeTopicTag bool        `toml:"exclude_topic_tag"`
-	TopicSuffix     TopicSuffix `toml:"topic_suffix"`
-	RoutingTag      string      `toml:"routing_tag"`
-	RoutingKey      string      `toml:"routing_key"`
-
+	Brokers           []string        `toml:"brokers"`
+	Topic             string          `toml:"topic"`
+	TopicTag          string          `toml:"topic_tag"`
+	ExcludeTopicTag   bool            `toml:"exclude_topic_tag"`
+	TopicSuffix       TopicSuffix     `toml:"topic_suffix"`
+	RoutingTag        string          `toml:"routing_tag"`
+	RoutingKey        string          `toml:"routing_key"`
+	ProducerTimestamp string          `toml:"producer_timestamp"`
+	MetricNameHeader  string          `toml:"metric_name_header"`
+	Log               telegraf.Logger `toml:"-"`
 	proxy.Socks5ProxyConfig
+	kafka.WriteConfig
 
 	// Legacy TLS config options
 	// TLS client certificate
@@ -47,12 +51,6 @@ type Kafka struct {
 	Key string
 	// TLS certificate authority
 	CA string
-
-	kafka.WriteConfig
-
-	kafka.Logger
-
-	Log telegraf.Logger `toml:"-"`
 
 	saramaConfig *sarama.Config
 	producerFunc func(addrs []string, config *sarama.Config) (sarama.SyncProducer, error)
@@ -121,10 +119,9 @@ func (k *Kafka) SetSerializer(serializer serializers.Serializer) {
 }
 
 func (k *Kafka) Init() error {
-	k.SetLogger()
+	kafka.SetLogger(k.Log.Level())
 
-	err := ValidateTopicSuffixMethod(k.TopicSuffix.Method)
-	if err != nil {
+	if err := ValidateTopicSuffixMethod(k.TopicSuffix.Method); err != nil {
 		return err
 	}
 	config := sarama.NewConfig()
@@ -132,8 +129,6 @@ func (k *Kafka) Init() error {
 	if err := k.SetConfig(config, k.Log); err != nil {
 		return err
 	}
-
-	k.saramaConfig = config
 
 	// Legacy support ssl config
 	if k.Certificate != "" {
@@ -151,6 +146,15 @@ func (k *Kafka) Init() error {
 		}
 		config.Net.Proxy.Dialer = dialer
 	}
+	k.saramaConfig = config
+
+	switch k.ProducerTimestamp {
+	case "":
+		k.ProducerTimestamp = "metric"
+	case "metric", "now":
+	default:
+		return fmt.Errorf("unknown producer_timestamp option: %s", k.ProducerTimestamp)
+	}
 
 	return nil
 }
@@ -158,13 +162,16 @@ func (k *Kafka) Init() error {
 func (k *Kafka) Connect() error {
 	producer, err := k.producerFunc(k.Brokers, k.saramaConfig)
 	if err != nil {
-		return err
+		return &internal.StartupError{Err: err, Retry: true}
 	}
 	k.producer = producer
 	return nil
 }
 
 func (k *Kafka) Close() error {
+	if k.producer == nil {
+		return nil
+	}
 	return k.producer.Close()
 }
 
@@ -203,8 +210,17 @@ func (k *Kafka) Write(metrics []telegraf.Metric) error {
 			Value: sarama.ByteEncoder(buf),
 		}
 
+		if k.MetricNameHeader != "" {
+			m.Headers = []sarama.RecordHeader{
+				{
+					Key:   []byte(k.MetricNameHeader),
+					Value: []byte(metric.Name()),
+				},
+			}
+		}
+
 		// Negative timestamps are not allowed by the Kafka protocol.
-		if !metric.Time().Before(zeroTime) {
+		if k.ProducerTimestamp == "metric" && !metric.Time().Before(zeroTime) {
 			m.Timestamp = metric.Time()
 		}
 
@@ -223,21 +239,21 @@ func (k *Kafka) Write(metrics []telegraf.Metric) error {
 	if err != nil {
 		// We could have many errors, return only the first encountered.
 		var errs sarama.ProducerErrors
-		if errors.As(err, &errs) {
-			for _, prodErr := range errs {
-				if errors.Is(prodErr.Err, sarama.ErrMessageSizeTooLarge) {
-					k.Log.Error("Message too large, consider increasing `max_message_bytes`; dropping batch")
-					return nil
-				}
-				if errors.Is(prodErr.Err, sarama.ErrInvalidTimestamp) {
-					k.Log.Error(
-						"The timestamp of the message is out of acceptable range, consider increasing broker `message.timestamp.difference.max.ms`; " +
-							"dropping batch",
-					)
-					return nil
-				}
-				return prodErr //nolint:staticcheck // Return first error encountered
+		if errors.As(err, &errs) && len(errs) > 0 {
+			// Just return the first error encountered
+			firstErr := errs[0]
+			if errors.Is(firstErr.Err, sarama.ErrMessageSizeTooLarge) {
+				k.Log.Error("Message too large, consider increasing `max_message_bytes`; dropping batch")
+				return nil
 			}
+			if errors.Is(firstErr.Err, sarama.ErrInvalidTimestamp) {
+				k.Log.Error(
+					"The timestamp of the message is out of acceptable range, consider increasing broker `message.timestamp.difference.max.ms`; " +
+						"dropping batch",
+				)
+				return nil
+			}
+			return firstErr
 		}
 		return err
 	}

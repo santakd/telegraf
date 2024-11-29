@@ -3,35 +3,35 @@ package wavefront
 import (
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"time"
 )
 
 var (
-	ErrEOF              = errors.New("EOF")
-	ErrInvalidTimestamp = errors.New("invalid timestamp")
+	errInvalidTimestamp = errors.New("invalid timestamp")
 )
 
-type ElementParser interface {
+type elementParser interface {
 	parse(p *PointParser, pt *Point) error
 }
 
-type NameParser struct{}
-type ValueParser struct{}
-type TimestampParser struct {
+type nameParser struct{}
+type valueParser struct{}
+type timestampParser struct {
 	optional bool
 }
-type WhiteSpaceParser struct {
+type whiteSpaceParser struct {
 	nextOptional bool
 }
-type TagParser struct{}
-type LoopedParser struct {
-	wrappedParser ElementParser
-	wsParser      *WhiteSpaceParser
+type tagParser struct{}
+type loopedParser struct {
+	wrappedParser elementParser
+	wsParser      *whiteSpaceParser
 }
 
-func (ep *NameParser) parse(p *PointParser, pt *Point) error {
-	//Valid characters are: a-z, A-Z, 0-9, hyphen ("-"), underscore ("_"), dot (".").
+func (ep *nameParser) parse(p *PointParser, pt *Point) error {
+	// Valid characters are: a-z, A-Z, 0-9, hyphen ("-"), underscore ("_"), dot (".").
 	// Forward slash ("/") and comma (",") are allowed if metricName is enclosed in double quotes.
 	// Delta (U+2206) is allowed as the first character of the
 	// metricName
@@ -44,7 +44,7 @@ func (ep *NameParser) parse(p *PointParser, pt *Point) error {
 	return nil
 }
 
-func (ep *ValueParser) parse(p *PointParser, pt *Point) error {
+func (ep *valueParser) parse(p *PointParser, pt *Point) error {
 	tok, lit := p.scan()
 	if tok == EOF {
 		return fmt.Errorf("found %q, expected number", lit)
@@ -52,16 +52,12 @@ func (ep *ValueParser) parse(p *PointParser, pt *Point) error {
 
 	p.writeBuf.Reset()
 	if tok == MinusSign {
-		if _, err := p.writeBuf.WriteString(lit); err != nil {
-			return fmt.Errorf("unable to write: %w", err)
-		}
+		p.writeBuf.WriteString(lit)
 		tok, lit = p.scan()
 	}
 
 	for tok != EOF && (tok == Letter || tok == Number || tok == Dot || tok == MinusSign) {
-		if _, err := p.writeBuf.WriteString(lit); err != nil {
-			return fmt.Errorf("unable to write: %w", err)
-		}
+		p.writeBuf.WriteString(lit)
 		tok, lit = p.scan()
 	}
 	p.unscan()
@@ -73,7 +69,7 @@ func (ep *ValueParser) parse(p *PointParser, pt *Point) error {
 	return nil
 }
 
-func (ep *TimestampParser) parse(p *PointParser, pt *Point) error {
+func (ep *timestampParser) parse(p *PointParser, pt *Point) error {
 	tok, lit := p.scan()
 	if tok == EOF {
 		if ep.optional {
@@ -88,14 +84,12 @@ func (ep *TimestampParser) parse(p *PointParser, pt *Point) error {
 			p.unscanTokens(2)
 			return setTimestamp(pt, 0, 1)
 		}
-		return ErrInvalidTimestamp
+		return errInvalidTimestamp
 	}
 
 	p.writeBuf.Reset()
 	for tok == Number {
-		if _, err := p.writeBuf.WriteString(lit); err != nil {
-			return fmt.Errorf("unable to write: %w", err)
-		}
+		p.writeBuf.WriteString(lit)
 		tok, lit = p.scan()
 	}
 	p.unscan()
@@ -121,7 +115,7 @@ func setTimestamp(pt *Point, ts int64, numDigits int) error {
 	} else if numDigits != 10 {
 		// must be in seconds, return error if not 0
 		if ts != 0 {
-			return ErrInvalidTimestamp
+			return errInvalidTimestamp
 		}
 		ts = getCurrentTime()
 	}
@@ -129,21 +123,21 @@ func setTimestamp(pt *Point, ts int64, numDigits int) error {
 	return nil
 }
 
-func (ep *LoopedParser) parse(p *PointParser, pt *Point) error {
+func (ep *loopedParser) parse(p *PointParser, pt *Point) error {
 	for {
 		err := ep.wrappedParser.parse(p, pt)
 		if err != nil {
 			return err
 		}
 		err = ep.wsParser.parse(p, pt)
-		if errors.Is(err, ErrEOF) {
+		if errors.Is(err, io.EOF) {
 			break
 		}
 	}
 	return nil
 }
 
-func (ep *TagParser) parse(p *PointParser, pt *Point) error {
+func (ep *tagParser) parse(p *PointParser, pt *Point) error {
 	k, err := parseLiteral(p)
 	if err != nil {
 		if k == "" {
@@ -168,7 +162,7 @@ func (ep *TagParser) parse(p *PointParser, pt *Point) error {
 	return nil
 }
 
-func (ep *WhiteSpaceParser) parse(p *PointParser, _ *Point) error {
+func (ep *whiteSpaceParser) parse(p *PointParser, _ *Point) error {
 	tok := Ws
 	for tok == Ws {
 		tok, _ = p.scan()
@@ -176,7 +170,7 @@ func (ep *WhiteSpaceParser) parse(p *PointParser, _ *Point) error {
 
 	if tok == EOF {
 		if !ep.nextOptional {
-			return ErrEOF
+			return io.EOF
 		}
 		return nil
 	}
@@ -192,9 +186,7 @@ func parseQuotedLiteral(p *PointParser) (string, error) {
 	for tok != EOF && (tok != Quotes || (tok == Quotes && escaped)) {
 		// let everything through
 		escaped = tok == Backslash
-		if _, err := p.writeBuf.WriteString(lit); err != nil {
-			return "", fmt.Errorf("unable to write: %w", err)
-		}
+		p.writeBuf.WriteString(lit)
 		tok, lit = p.scan()
 	}
 	if tok == EOF {
@@ -215,9 +207,7 @@ func parseLiteral(p *PointParser) (string, error) {
 
 	p.writeBuf.Reset()
 	for tok != EOF && tok > literalBeg && tok < literalEnd {
-		if _, err := p.writeBuf.WriteString(lit); err != nil {
-			return "", fmt.Errorf("unable to write: %w", err)
-		}
+		p.writeBuf.WriteString(lit)
 		tok, lit = p.scan()
 		if tok == Delta {
 			return "", errors.New("found delta inside metric name")

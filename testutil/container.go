@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/go-connections/nat"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -22,15 +23,17 @@ func (g *TestLogConsumer) Accept(l testcontainers.Log) {
 }
 
 type Container struct {
-	BindMounts   map[string]string
-	Entrypoint   []string
-	Env          map[string]string
-	ExposedPorts []string
-	Cmd          []string
-	Image        string
-	Name         string
-	Networks     []string
-	WaitingFor   wait.Strategy
+	Entrypoint         []string
+	Env                map[string]string
+	Files              map[string]string
+	HostConfigModifier func(*container.HostConfig)
+	ExposedPorts       []string
+	Cmd                []string
+	Image              string
+	Name               string
+	Hostname           string
+	Networks           []string
+	WaitingFor         wait.Strategy
 
 	Address string
 	Ports   map[string]string
@@ -43,35 +46,39 @@ type Container struct {
 func (c *Container) Start() error {
 	c.ctx = context.Background()
 
-	containerMounts := make([]testcontainers.ContainerMount, 0, len(c.BindMounts))
-	for k, v := range c.BindMounts {
-		containerMounts = append(containerMounts, testcontainers.BindMount(v, testcontainers.ContainerMountTarget(k)))
+	files := make([]testcontainers.ContainerFile, 0, len(c.Files))
+	for k, v := range c.Files {
+		files = append(files, testcontainers.ContainerFile{
+			ContainerFilePath: k,
+			HostFilePath:      v,
+			FileMode:          0o755,
+		})
 	}
 
 	req := testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
-			Mounts:       testcontainers.Mounts(containerMounts...),
-			Entrypoint:   c.Entrypoint,
-			Env:          c.Env,
-			ExposedPorts: c.ExposedPorts,
-			Cmd:          c.Cmd,
-			Image:        c.Image,
-			Name:         c.Name,
-			Networks:     c.Networks,
-			WaitingFor:   c.WaitingFor,
+			Entrypoint:         c.Entrypoint,
+			Env:                c.Env,
+			ExposedPorts:       c.ExposedPorts,
+			Files:              files,
+			HostConfigModifier: c.HostConfigModifier,
+			Cmd:                c.Cmd,
+			Image:              c.Image,
+			Name:               c.Name,
+			Hostname:           c.Hostname,
+			Networks:           c.Networks,
+			WaitingFor:         c.WaitingFor,
 		},
 		Started: true,
 	}
 
-	container, err := testcontainers.GenericContainer(c.ctx, req)
+	cntnr, err := testcontainers.GenericContainer(c.ctx, req)
 	if err != nil {
 		return fmt.Errorf("container failed to start: %w", err)
 	}
-	c.container = container
+	c.container = cntnr
 
-	c.Logs = TestLogConsumer{
-		Msgs: []string{},
-	}
+	c.Logs = TestLogConsumer{}
 	c.container.FollowOutput(&c.Logs)
 	err = c.container.StartLogProducer(c.ctx)
 	if err != nil {
@@ -146,4 +153,22 @@ func (c *Container) Terminate() {
 	}
 
 	c.PrintLogs()
+}
+
+func (c *Container) Pause() error {
+	provider, err := testcontainers.NewDockerProvider()
+	if err != nil {
+		return fmt.Errorf("getting provider failed: %w", err)
+	}
+
+	return provider.Client().ContainerPause(c.ctx, c.container.GetContainerID())
+}
+
+func (c *Container) Resume() error {
+	provider, err := testcontainers.NewDockerProvider()
+	if err != nil {
+		return fmt.Errorf("getting provider failed: %w", err)
+	}
+
+	return provider.Client().ContainerUnpause(c.ctx, c.container.GetContainerID())
 }

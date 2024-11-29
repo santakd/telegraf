@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
+	"k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -27,40 +27,25 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-// Kubernetes represents the config object for the plugin
-type Kubernetes struct {
-	URL string
-
-	// Bearer Token authorization file path
-	BearerToken       string `toml:"bearer_token"`
-	BearerTokenString string `toml:"bearer_token_string" deprecated:"1.24.0;use 'BearerToken' with a file instead"`
-
-	LabelInclude []string `toml:"label_include"`
-	LabelExclude []string `toml:"label_exclude"`
-
-	labelFilter filter.Filter
-
-	// HTTP Timeout specified as a string - 3s, 1m, 1h
-	ResponseTimeout config.Duration
-
-	tls.ClientConfig
-
-	Log telegraf.Logger `toml:"-"`
-
-	httpClient *http.Client
-}
-
 const (
 	defaultServiceAccountPath = "/var/run/secrets/kubernetes.io/serviceaccount/token"
 )
 
-func init() {
-	inputs.Add("kubernetes", func() telegraf.Input {
-		return &Kubernetes{
-			LabelInclude: []string{},
-			LabelExclude: []string{"*"},
-		}
-	})
+// Kubernetes represents the config object for the plugin
+type Kubernetes struct {
+	URL               string          `toml:"url"`
+	BearerToken       string          `toml:"bearer_token"`
+	BearerTokenString string          `toml:"bearer_token_string" deprecated:"1.24.0;1.35.0;use 'BearerToken' with a file instead"`
+	NodeMetricName    string          `toml:"node_metric_name"`
+	LabelInclude      []string        `toml:"label_include"`
+	LabelExclude      []string        `toml:"label_exclude"`
+	ResponseTimeout   config.Duration `toml:"response_timeout"`
+	Log               telegraf.Logger `toml:"-"`
+
+	tls.ClientConfig
+
+	labelFilter filter.Filter
+	httpClient  *http.Client
 }
 
 func (*Kubernetes) SampleConfig() string {
@@ -83,10 +68,13 @@ func (k *Kubernetes) Init() error {
 		k.InsecureSkipVerify = true
 	}
 
+	if k.NodeMetricName == "" {
+		k.NodeMetricName = "kubernetes_node"
+	}
+
 	return nil
 }
 
-// Gather collects kubernetes metrics from a given URL
 func (k *Kubernetes) Gather(acc telegraf.Accumulator) error {
 	if k.URL != "" {
 		acc.AddError(k.gatherSummary(k.URL, acc))
@@ -127,8 +115,10 @@ func getNodeURLs(log telegraf.Logger) ([]string, error) {
 	}
 
 	nodeUrls := make([]string, 0, len(nodes.Items))
-	for _, n := range nodes.Items {
-		address := getNodeAddress(n)
+	for i := range nodes.Items {
+		n := &nodes.Items[i]
+
+		address := getNodeAddress(n.Status.Addresses)
 		if address == "" {
 			log.Warnf("Unable to node addresses for Node %q", n.Name)
 			continue
@@ -140,10 +130,9 @@ func getNodeURLs(log telegraf.Logger) ([]string, error) {
 }
 
 // Prefer internal addresses, if none found, use ExternalIP
-func getNodeAddress(node v1.Node) string {
+func getNodeAddress(addresses []v1.NodeAddress) string {
 	extAddresses := make([]string, 0)
-
-	for _, addr := range node.Status.Addresses {
+	for _, addr := range addresses {
 		if addr.Type == v1.NodeInternalIP {
 			return addr.Address
 		}
@@ -157,8 +146,8 @@ func getNodeAddress(node v1.Node) string {
 }
 
 func (k *Kubernetes) gatherSummary(baseURL string, acc telegraf.Accumulator) error {
-	summaryMetrics := &SummaryMetrics{}
-	err := k.LoadJSON(fmt.Sprintf("%s/stats/summary", baseURL), summaryMetrics)
+	summaryMetrics := &summaryMetrics{}
+	err := k.loadJSON(baseURL+"/stats/summary", summaryMetrics)
 	if err != nil {
 		return err
 	}
@@ -168,12 +157,12 @@ func (k *Kubernetes) gatherSummary(baseURL string, acc telegraf.Accumulator) err
 		return err
 	}
 	buildSystemContainerMetrics(summaryMetrics, acc)
-	buildNodeMetrics(summaryMetrics, acc)
+	buildNodeMetrics(summaryMetrics, acc, k.NodeMetricName)
 	buildPodMetrics(summaryMetrics, podInfos, k.labelFilter, acc)
 	return nil
 }
 
-func buildSystemContainerMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Accumulator) {
+func buildSystemContainerMetrics(summaryMetrics *summaryMetrics, acc telegraf.Accumulator) {
 	for _, container := range summaryMetrics.Node.SystemContainers {
 		tags := map[string]string{
 			"node_name":      summaryMetrics.Node.NodeName,
@@ -195,7 +184,7 @@ func buildSystemContainerMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Ac
 	}
 }
 
-func buildNodeMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Accumulator) {
+func buildNodeMetrics(summaryMetrics *summaryMetrics, acc telegraf.Accumulator, metricName string) {
 	tags := map[string]string{
 		"node_name": summaryMetrics.Node.NodeName,
 	}
@@ -218,21 +207,21 @@ func buildNodeMetrics(summaryMetrics *SummaryMetrics, acc telegraf.Accumulator) 
 	fields["runtime_image_fs_available_bytes"] = summaryMetrics.Node.Runtime.ImageFileSystem.AvailableBytes
 	fields["runtime_image_fs_capacity_bytes"] = summaryMetrics.Node.Runtime.ImageFileSystem.CapacityBytes
 	fields["runtime_image_fs_used_bytes"] = summaryMetrics.Node.Runtime.ImageFileSystem.UsedBytes
-	acc.AddFields("kubernetes_node", fields, tags)
+	acc.AddFields(metricName, fields, tags)
 }
 
-func (k *Kubernetes) gatherPodInfo(baseURL string) ([]Item, error) {
-	var podAPI Pods
-	err := k.LoadJSON(fmt.Sprintf("%s/pods", baseURL), &podAPI)
+func (k *Kubernetes) gatherPodInfo(baseURL string) ([]item, error) {
+	var podAPI pods
+	err := k.loadJSON(baseURL+"/pods", &podAPI)
 	if err != nil {
 		return nil, err
 	}
-	podInfos := make([]Item, 0, len(podAPI.Items))
+	podInfos := make([]item, 0, len(podAPI.Items))
 	podInfos = append(podInfos, podAPI.Items...)
 	return podInfos, nil
 }
 
-func (k *Kubernetes) LoadJSON(url string, v interface{}) error {
+func (k *Kubernetes) loadJSON(url string, v interface{}) error {
 	var req, err = http.NewRequest("GET", url, nil)
 	if err != nil {
 		return err
@@ -251,7 +240,7 @@ func (k *Kubernetes) LoadJSON(url string, v interface{}) error {
 			Transport: &http.Transport{
 				TLSClientConfig: tlsCfg,
 			},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 			Timeout: time.Duration(k.ResponseTimeout),
@@ -284,7 +273,7 @@ func (k *Kubernetes) LoadJSON(url string, v interface{}) error {
 	return nil
 }
 
-func buildPodMetrics(summaryMetrics *SummaryMetrics, podInfo []Item, labelFilter filter.Filter, acc telegraf.Accumulator) {
+func buildPodMetrics(summaryMetrics *summaryMetrics, podInfo []item, labelFilter filter.Filter, acc telegraf.Accumulator) {
 	for _, pod := range summaryMetrics.Pods {
 		podLabels := make(map[string]string)
 		containerImages := make(map[string]string)
@@ -369,4 +358,12 @@ func buildPodMetrics(summaryMetrics *SummaryMetrics, podInfo []Item, labelFilter
 		fields["tx_errors"] = pod.Network.TXErrors
 		acc.AddFields("kubernetes_pod_network", fields, tags)
 	}
+}
+
+func init() {
+	inputs.Add("kubernetes", func() telegraf.Input {
+		return &Kubernetes{
+			LabelExclude: []string{"*"},
+		}
+	})
 }

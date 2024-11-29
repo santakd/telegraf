@@ -7,6 +7,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -20,15 +21,18 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
+var defaultMaxBufferSize = config.Size(100 * 1024 * 1024)
+
 type WinPerfCounters struct {
 	PrintValid                 bool `toml:"PrintValid"`
-	PreVistaSupport            bool `toml:"PreVistaSupport" deprecated:"1.7.0;determined dynamically"`
+	PreVistaSupport            bool `toml:"PreVistaSupport" deprecated:"1.7.0;1.35.0;determined dynamically"`
 	UsePerfCounterTime         bool
 	Object                     []perfObject
 	CountersRefreshInterval    config.Duration
 	UseWildcardsExpansion      bool
 	LocalizeWildcardsExpansion bool
 	IgnoredErrors              []string `toml:"IgnoredErrors"`
+	MaxBufferSize              config.Size
 	Sources                    []string
 
 	Log telegraf.Logger
@@ -207,7 +211,7 @@ func (m *WinPerfCounters) AddItem(counterPath, computer, objectName, instance, c
 	if !ok {
 		hostCounter = &hostCountersInfo{computer: computer, tag: sourceTag}
 		m.hostCounters[computer] = hostCounter
-		hostCounter.query = m.queryCreator.NewPerformanceQuery(computer)
+		hostCounter.query = m.queryCreator.NewPerformanceQuery(computer, uint32(m.MaxBufferSize))
 		if err := hostCounter.query.Open(); err != nil {
 			return err
 		}
@@ -353,7 +357,7 @@ func (m *WinPerfCounters) ParseConfig() error {
 		m.Sources = []string{"localhost"}
 	}
 
-	if len(m.Object) <= 0 {
+	if len(m.Object) == 0 {
 		err := errors.New("no performance objects configured")
 		return err
 	}
@@ -395,7 +399,7 @@ func (m *WinPerfCounters) ParseConfig() error {
 }
 
 func (m *WinPerfCounters) checkError(err error) error {
-	var pdhErr *PdhError
+	var pdhErr *pdhError
 	if errors.As(err, &pdhErr) {
 		for _, ignoredErrors := range m.IgnoredErrors {
 			if PDHErrors[pdhErr.ErrorCode] == ignoredErrors {
@@ -421,7 +425,7 @@ func (m *WinPerfCounters) Gather(acc telegraf.Accumulator) error {
 			return err
 		}
 		for _, hostCounterSet := range m.hostCounters {
-			//some counters need two data samples before computing a value
+			// some counters need two data samples before computing a value
 			if err = hostCounterSet.query.CollectData(); err != nil {
 				return m.checkError(err)
 			}
@@ -445,7 +449,7 @@ func (m *WinPerfCounters) Gather(acc telegraf.Accumulator) error {
 		}
 	}
 	var wg sync.WaitGroup
-	//iterate over computers
+	// iterate over computers
 	for _, hostCounterInfo := range m.hostCounters {
 		wg.Add(1)
 		go func(hostInfo *hostCountersInfo) {
@@ -453,7 +457,7 @@ func (m *WinPerfCounters) Gather(acc telegraf.Accumulator) error {
 			start := time.Now()
 			err := m.gatherComputerCounters(hostInfo, acc)
 			m.Log.Debugf("Gathering from %s finished in %v", hostInfo.computer, time.Since(start))
-			if err != nil {
+			if err != nil && m.checkError(err) != nil {
 				acc.AddError(fmt.Errorf("error during collecting data on host %q: %w", hostInfo.computer, err))
 			}
 			wg.Done()
@@ -478,7 +482,7 @@ func (m *WinPerfCounters) gatherComputerCounters(hostCounterInfo *hostCountersIn
 				value, err = hostCounterInfo.query.GetFormattedCounterValueDouble(metric.counterHandle)
 			}
 			if err != nil {
-				//ignore invalid data  as some counters from process instances returns this sometimes
+				// ignore invalid data  as some counters from process instances returns this sometimes
 				if !isKnownCounterDataError(err) {
 					return fmt.Errorf("error while getting value for counter %q: %w", metric.counterPath, err)
 				}
@@ -487,14 +491,14 @@ func (m *WinPerfCounters) gatherComputerCounters(hostCounterInfo *hostCountersIn
 			}
 			addCounterMeasurement(metric, metric.instance, value, collectedFields)
 		} else {
-			var counterValues []CounterValue
+			var counterValues []counterValue
 			if metric.useRawValue {
 				counterValues, err = hostCounterInfo.query.GetRawCounterArray(metric.counterHandle)
 			} else {
 				counterValues, err = hostCounterInfo.query.GetFormattedCounterArrayDouble(metric.counterHandle)
 			}
 			if err != nil {
-				//ignore invalid data  as some counters from process instances returns this sometimes
+				// ignore invalid data  as some counters from process instances returns this sometimes
 				if !isKnownCounterDataError(err) {
 					return fmt.Errorf("error while getting value for counter %q: %w", metric.counterPath, err)
 				}
@@ -539,7 +543,7 @@ func (m *WinPerfCounters) cleanQueries() error {
 	return nil
 }
 
-func shouldIncludeMetric(metric *counter, cValue CounterValue) bool {
+func shouldIncludeMetric(metric *counter, cValue counterValue) bool {
 	if metric.includeTotal {
 		// If IncludeTotal is set, include all.
 		return true
@@ -567,11 +571,12 @@ func addCounterMeasurement(metric *counter, instanceName string, value interface
 }
 
 func isKnownCounterDataError(err error) bool {
-	var pdhErr *PdhError
+	var pdhErr *pdhError
 	if errors.As(err, &pdhErr) && (pdhErr.ErrorCode == PdhInvalidData ||
 		pdhErr.ErrorCode == PdhCalcNegativeDenominator ||
 		pdhErr.ErrorCode == PdhCalcNegativeValue ||
 		pdhErr.ErrorCode == PdhCstatusInvalidData ||
+		pdhErr.ErrorCode == PdhCstatusNoInstance ||
 		pdhErr.ErrorCode == PdhNoData) {
 		return true
 	}
@@ -579,9 +584,16 @@ func isKnownCounterDataError(err error) bool {
 }
 
 func (m *WinPerfCounters) Init() error {
+	// Check the buffer size
+	if m.MaxBufferSize < config.Size(initialBufferSize) {
+		return fmt.Errorf("maximum buffer size should at least be %d", 2*initialBufferSize)
+	}
+	if m.MaxBufferSize > math.MaxUint32 {
+		return fmt.Errorf("maximum buffer size should be smaller than %d", uint32(math.MaxUint32))
+	}
+
 	if m.UseWildcardsExpansion && !m.LocalizeWildcardsExpansion {
 		// Counters must not have wildcards with this option
-
 		found := false
 		wildcards := []string{"*", "?"}
 
@@ -603,7 +615,7 @@ func (m *WinPerfCounters) Init() error {
 		}
 
 		if found {
-			return fmt.Errorf("wildcards can't be used with LocalizeWildcardsExpansion=false")
+			return errors.New("wildcards can't be used with LocalizeWildcardsExpansion=false")
 		}
 	}
 	return nil
@@ -614,7 +626,8 @@ func init() {
 		return &WinPerfCounters{
 			CountersRefreshInterval:    config.Duration(time.Second * 60),
 			LocalizeWildcardsExpansion: true,
-			queryCreator:               &PerformanceQueryCreatorImpl{},
+			MaxBufferSize:              defaultMaxBufferSize,
+			queryCreator:               &performanceQueryCreatorImpl{},
 		}
 	})
 }

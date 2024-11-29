@@ -10,23 +10,32 @@ import (
 )
 
 func collectPods(ctx context.Context, acc telegraf.Accumulator, ki *KubernetesInventory) {
-	list, err := ki.client.getPods(ctx)
+	var list corev1.PodList
+	listRef := &list
+	var err error
+
+	if ki.KubeletURL != "" {
+		err = ki.queryPodsFromKubelet(ki.KubeletURL+"/pods", listRef)
+	} else {
+		listRef, err = ki.client.getPods(ctx, ki.NodeName)
+	}
+
 	if err != nil {
 		acc.AddError(err)
 		return
 	}
-	for _, p := range list.Items {
-		ki.gatherPod(p, acc)
+	for i := range listRef.Items {
+		ki.gatherPod(&listRef.Items[i], acc)
 	}
 }
 
-func (ki *KubernetesInventory) gatherPod(p corev1.Pod, acc telegraf.Accumulator) {
+func (ki *KubernetesInventory) gatherPod(p *corev1.Pod, acc telegraf.Accumulator) {
 	creationTs := p.GetCreationTimestamp()
 	if creationTs.IsZero() {
 		return
 	}
 
-	containerList := map[string]*corev1.ContainerStatus{}
+	containerList := make(map[string]*corev1.ContainerStatus, len(p.Status.ContainerStatuses))
 	for i := range p.Status.ContainerStatuses {
 		containerList[p.Status.ContainerStatuses[i].Name] = &p.Status.ContainerStatuses[i]
 	}
@@ -40,7 +49,7 @@ func (ki *KubernetesInventory) gatherPod(p corev1.Pod, acc telegraf.Accumulator)
 	}
 }
 
-func (ki *KubernetesInventory) gatherPodContainer(p corev1.Pod, cs corev1.ContainerStatus, c corev1.Container, acc telegraf.Accumulator) {
+func (ki *KubernetesInventory) gatherPodContainer(p *corev1.Pod, cs corev1.ContainerStatus, c corev1.Container, acc telegraf.Accumulator) {
 	stateCode := 3
 	stateReason := ""
 	state := "unknown"
@@ -124,7 +133,6 @@ func (ki *KubernetesInventory) gatherPodContainer(p corev1.Pod, cs corev1.Contai
 	}
 
 	for _, val := range p.Status.Conditions {
-		conditionfields := map[string]interface{}{}
 		conditiontags := map[string]string{
 			"container_name": c.Name,
 			"image":          splitImage[0],
@@ -150,8 +158,10 @@ func (ki *KubernetesInventory) gatherPodContainer(p corev1.Pod, cs corev1.Contai
 			}
 			running = 2
 		}
-		conditionfields["status_condition"] = running
-		conditionfields["ready"] = podready
+		conditionfields := map[string]interface{}{
+			"status_condition": running,
+			"ready":            podready,
+		}
 		acc.AddFields(podContainerMeasurement, conditionfields, conditiontags)
 	}
 

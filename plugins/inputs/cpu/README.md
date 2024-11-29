@@ -1,19 +1,10 @@
 # CPU Input Plugin
 
-The `cpu` plugin gather metrics on the system CPUs.
+This plugin gather metrics on the system's CPUs.
 
-## macOS Support
-
-The [gopsutil][1] library, which is used to collect CPU data, does not support
-gathering CPU metrics without CGO on macOS. The user will see a "not
-implemented" message in this case. Builds provided by InfluxData do not build
-with CGO.
-
-Users can use the builds provided by [Homebrew][2], which build with CGO, to
-produce CPU metrics.
-
-[1]: https://github.com/shirou/gopsutil/blob/master/cpu/cpu_darwin_nocgo.go
-[2]: https://formulae.brew.sh/formula/telegraf
+⭐ Telegraf v0.1.5
+🏷️ system
+💻 all
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -36,6 +27,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## If true, collect raw CPU time metrics
   collect_cpu_time = false
   ## If true, compute and report the sum of all non-idle CPU states
+  ## NOTE: The resulting 'time_active' field INCLUDES 'iowait'!
   report_active = false
   ## If true and the info is available then add core_id and physical_id tags
   core_tags = false

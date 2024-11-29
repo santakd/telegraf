@@ -11,6 +11,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
 var defaultTags = map[string]string{
@@ -209,7 +210,7 @@ func TestSerializeMetricHostWithMultipleTemplatesWithDefault(t *testing.T) {
 		},
 	}
 	require.NoError(t, s.Init())
-	require.Equal(t, s.Template, "tags.host.measurement.field")
+	require.Equal(t, "tags.host.measurement.field", s.Template)
 
 	buf, err := s.Serialize(m1)
 	require.NoError(t, err)
@@ -1051,7 +1052,8 @@ func TestCleanWithTagsSupport(t *testing.T) {
 			require.NoError(t, s.Init())
 
 			m := metric.New(tt.metricName, tt.tags, tt.fields, now)
-			actual, _ := s.Serialize(m)
+			actual, err := s.Serialize(m)
+			require.NoError(t, err)
 			require.Equal(t, tt.expected, string(actual))
 		})
 	}
@@ -1148,7 +1150,8 @@ func TestCleanWithTagsSupportCompatibleSanitize(t *testing.T) {
 			require.NoError(t, s.Init())
 
 			m := metric.New(tt.metricName, tt.tags, tt.fields, now)
-			actual, _ := s.Serialize(m)
+			actual, err := s.Serialize(m)
+			require.NoError(t, err)
 			require.Equal(t, tt.expected, string(actual))
 		})
 	}
@@ -1178,7 +1181,8 @@ func TestSerializeBatch(t *testing.T) {
 			require.NoError(t, s.Init())
 
 			m := metric.New(tt.metricName, tt.tags, tt.fields, now)
-			actual, _ := s.SerializeBatch([]telegraf.Metric{m, m})
+			actual, err := s.SerializeBatch([]telegraf.Metric{m, m})
+			require.NoError(t, err)
 			require.Equal(t, tt.expected, string(actual))
 		})
 	}
@@ -1211,8 +1215,32 @@ func TestSerializeBatchWithTagsSupport(t *testing.T) {
 			require.NoError(t, s.Init())
 
 			m := metric.New(tt.metricName, tt.tags, tt.fields, now)
-			actual, _ := s.SerializeBatch([]telegraf.Metric{m, m})
+			actual, err := s.SerializeBatch([]telegraf.Metric{m, m})
+			require.NoError(t, err)
 			require.Equal(t, tt.expected, string(actual))
 		})
+	}
+}
+
+func BenchmarkSerialize(b *testing.B) {
+	s := &GraphiteSerializer{}
+	require.NoError(b, s.Init())
+	metrics := serializers.BenchmarkMetrics(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.Serialize(metrics[i%len(metrics)])
+		require.NoError(b, err)
+	}
+}
+
+func BenchmarkSerializeBatch(b *testing.B) {
+	s := &GraphiteSerializer{}
+	require.NoError(b, s.Init())
+	m := serializers.BenchmarkMetrics(b)
+	metrics := m[:]
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.SerializeBatch(metrics)
+		require.NoError(b, err)
 	}
 }

@@ -16,7 +16,7 @@ import (
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/common/mqtt"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
-	influxSerializer "github.com/influxdata/telegraf/plugins/serializers/influx"
+	serializers_influx "github.com/influxdata/telegraf/plugins/serializers/influx"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -30,7 +30,7 @@ func launchTestContainer(t *testing.T) *testutil.Container {
 		Image:        "eclipse-mosquitto:2",
 		ExposedPorts: []string{servicePort},
 		WaitingFor:   wait.ForListeningPort(servicePort),
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/mosquitto/config/mosquitto.conf": conf,
 		},
 	}
@@ -48,7 +48,7 @@ func TestConnectAndWriteIntegration(t *testing.T) {
 	container := launchTestContainer(t)
 	defer container.Terminate()
 	var url = fmt.Sprintf("%s:%s", container.Address, container.Ports[servicePort])
-	s := &influxSerializer.Serializer{}
+	s := &serializers_influx.Serializer{}
 	require.NoError(t, s.Init())
 	m := &MQTT{
 		MqttConfig: mqtt.MqttConfig{
@@ -79,7 +79,7 @@ func TestConnectAndWriteIntegrationMQTTv3(t *testing.T) {
 	defer container.Terminate()
 
 	var url = fmt.Sprintf("%s:%s", container.Address, container.Ports[servicePort])
-	s := &influxSerializer.Serializer{}
+	s := &serializers_influx.Serializer{}
 	require.NoError(t, s.Init())
 
 	m := &MQTT{
@@ -112,7 +112,7 @@ func TestConnectAndWriteIntegrationMQTTv5(t *testing.T) {
 	defer container.Terminate()
 
 	url := fmt.Sprintf("%s:%s", container.Address, container.Ports[servicePort])
-	s := &influxSerializer.Serializer{}
+	s := &serializers_influx.Serializer{}
 	require.NoError(t, s.Init())
 
 	m := &MQTT{
@@ -146,7 +146,7 @@ func TestIntegrationMQTTv3(t *testing.T) {
 		Image:        "eclipse-mosquitto:2",
 		ExposedPorts: []string{servicePort},
 		WaitingFor:   wait.ForListeningPort(servicePort),
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/mosquitto/config/mosquitto.conf": conf,
 		},
 	}
@@ -156,7 +156,7 @@ func TestIntegrationMQTTv3(t *testing.T) {
 	// Setup the parser / serializer pair
 	parser := &influx.Parser{}
 	require.NoError(t, parser.Init())
-	serializer := &influxSerializer.Serializer{}
+	serializer := &serializers_influx.Serializer{}
 	require.NoError(t, serializer.Init())
 
 	// Setup the plugin
@@ -271,7 +271,7 @@ func TestMQTTv5Properties(t *testing.T) {
 			}
 
 			// Setup the metric serializer
-			serializer := &influxSerializer.Serializer{}
+			serializer := &serializers_influx.Serializer{}
 			require.NoError(t, serializer.Init())
 
 			plugin.SetSerializer(serializer)
@@ -298,7 +298,7 @@ func TestIntegrationMQTTLayoutNonBatch(t *testing.T) {
 		Image:        "eclipse-mosquitto:2",
 		ExposedPorts: []string{servicePort},
 		WaitingFor:   wait.ForListeningPort(servicePort),
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/mosquitto/config/mosquitto.conf": conf,
 		},
 	}
@@ -308,7 +308,7 @@ func TestIntegrationMQTTLayoutNonBatch(t *testing.T) {
 	// Setup the parser / serializer pair
 	parser := &influx.Parser{}
 	require.NoError(t, parser.Init())
-	serializer := &influxSerializer.Serializer{}
+	serializer := &serializers_influx.Serializer{}
 	require.NoError(t, serializer.Init())
 
 	// Setup the plugin
@@ -385,7 +385,7 @@ func TestIntegrationMQTTLayoutBatch(t *testing.T) {
 		Image:        "eclipse-mosquitto:2",
 		ExposedPorts: []string{servicePort},
 		WaitingFor:   wait.ForListeningPort(servicePort),
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/mosquitto/config/mosquitto.conf": conf,
 		},
 	}
@@ -395,7 +395,7 @@ func TestIntegrationMQTTLayoutBatch(t *testing.T) {
 	// Setup the parser / serializer pair
 	parser := &influx.Parser{}
 	require.NoError(t, parser.Init())
-	serializer := &influxSerializer.Serializer{}
+	serializer := &serializers_influx.Serializer{}
 	require.NoError(t, serializer.Init())
 
 	// Setup the plugin
@@ -475,7 +475,7 @@ func TestIntegrationMQTTLayoutField(t *testing.T) {
 		Image:        "eclipse-mosquitto:2",
 		ExposedPorts: []string{servicePort},
 		WaitingFor:   wait.ForListeningPort(servicePort),
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/mosquitto/config/mosquitto.conf": conf,
 		},
 	}
@@ -590,7 +590,7 @@ func TestIntegrationMQTTLayoutHomieV4(t *testing.T) {
 		Image:        "eclipse-mosquitto:2",
 		ExposedPorts: []string{servicePort},
 		WaitingFor:   wait.ForListeningPort(servicePort),
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/mosquitto/config/mosquitto.conf": conf,
 		},
 	}
@@ -861,7 +861,7 @@ func TestMQTTTopicGenerationTemplateIsValid(t *testing.T) {
 }
 
 func TestGenerateTopicName(t *testing.T) {
-	s := &influxSerializer.Serializer{}
+	s := &serializers_influx.Serializer{}
 	require.NoError(t, s.Init())
 
 	m := &MQTT{
@@ -907,6 +907,11 @@ func TestGenerateTopicName(t *testing.T) {
 			name:    "ignores empty forward slashes",
 			pattern: "double//slashes//are//ignored",
 			want:    "double/slashes/are/ignored",
+		},
+		{
+			name:    "preserve leading forward slash",
+			pattern: "/this/is/a/topic",
+			want:    "/this/is/a/topic",
 		},
 	}
 	for _, tt := range tests {

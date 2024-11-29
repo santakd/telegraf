@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -17,7 +18,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	influxtls "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -36,7 +37,7 @@ type OpensearchQuery struct {
 
 	Log telegraf.Logger `toml:"-"`
 
-	influxtls.ClientConfig
+	common_tls.ClientConfig
 	osClient *opensearch.Client
 }
 
@@ -65,7 +66,7 @@ func (*OpensearchQuery) SampleConfig() string {
 // Init the plugin.
 func (o *OpensearchQuery) Init() error {
 	if o.URLs == nil {
-		return fmt.Errorf("no urls defined")
+		return errors.New("no urls defined")
 	}
 
 	err := o.newClient()
@@ -75,10 +76,10 @@ func (o *OpensearchQuery) Init() error {
 
 	for i, agg := range o.Aggregations {
 		if agg.MeasurementName == "" {
-			return fmt.Errorf("field 'measurement_name' is not set")
+			return errors.New("field 'measurement_name' is not set")
 		}
 		if agg.DateField == "" {
-			return fmt.Errorf("field 'date_field' is not set")
+			return errors.New("field 'date_field' is not set")
 		}
 		err = o.initAggregation(agg, i)
 		if err != nil {
@@ -109,19 +110,19 @@ func (o *OpensearchQuery) newClient() error {
 	if err != nil {
 		return fmt.Errorf("getting username failed: %w", err)
 	}
+	defer username.Destroy()
+
 	password, err := o.Password.Get()
 	if err != nil {
-		config.ReleaseSecret(username)
 		return fmt.Errorf("getting password failed: %w", err)
 	}
+	defer password.Destroy()
 
 	clientConfig := opensearch.Config{
 		Addresses: o.URLs,
-		Username:  string(username),
-		Password:  string(password),
+		Username:  username.String(),
+		Password:  password.String(),
 	}
-	config.ReleaseSecret(username)
-	config.ReleaseSecret(password)
 
 	if o.InsecureSkipVerify {
 		clientConfig.Transport = &http.Transport{
@@ -175,7 +176,7 @@ func init() {
 	})
 }
 
-func (o *OpensearchQuery) runAggregationQuery(ctx context.Context, aggregation osAggregation) (*AggregationResponse, error) {
+func (o *OpensearchQuery) runAggregationQuery(ctx context.Context, aggregation osAggregation) (*aggregationResponse, error) {
 	now := time.Now().UTC()
 	from := now.Add(time.Duration(-aggregation.QueryPeriod))
 	filterQuery := aggregation.FilterQuery
@@ -218,7 +219,7 @@ func (o *OpensearchQuery) runAggregationQuery(ctx context.Context, aggregation o
 	}
 	defer resp.Body.Close()
 
-	var searchResult AggregationResponse
+	var searchResult aggregationResponse
 
 	decoder := json.NewDecoder(resp.Body)
 	err = decoder.Decode(&searchResult)
@@ -255,7 +256,10 @@ func (aggregation *osAggregation) buildAggregationQuery() error {
 		if err != nil {
 			return err
 		}
-		_ = bucket.BucketSize(name, 1000)
+		err = bucket.BucketSize(name, 1000)
+		if err != nil {
+			return err
+		}
 		if aggregation.IncludeMissingTag && aggregation.MissingTagValue != "" {
 			bucket.Missing(name, aggregation.MissingTagValue)
 		}

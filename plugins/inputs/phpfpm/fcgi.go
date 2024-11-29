@@ -146,17 +146,13 @@ func (c *conn) writeRecord(recType recType, reqID uint16, b []byte) error {
 	if err := binary.Write(&c.buf, binary.BigEndian, c.h); err != nil {
 		return err
 	}
-	if _, err := c.buf.Write(b); err != nil {
-		return err
-	}
-	if _, err := c.buf.Write(pad[:c.h.PaddingLength]); err != nil {
-		return err
-	}
+	c.buf.Write(b)
+	c.buf.Write(pad[:c.h.PaddingLength])
 	_, err := c.rwc.Write(c.buf.Bytes())
 	return err
 }
 
-func (c *conn) writeBeginRequest(reqID uint16, role uint16, flags uint8) error {
+func (c *conn) writeBeginRequest(reqID, role uint16, flags uint8) error {
 	b := [8]byte{byte(role >> 8), byte(role), flags}
 	return c.writeRecord(typeBeginRequest, reqID, b[:])
 }

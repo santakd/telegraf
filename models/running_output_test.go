@@ -1,7 +1,7 @@
 package models
 
 import (
-	"fmt"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/selfstat"
 	"github.com/influxdata/telegraf/testutil"
 )
@@ -29,55 +30,8 @@ var next5 = []telegraf.Metric{
 	testutil.TestMetric(101, "metric10"),
 }
 
-// Benchmark adding metrics.
-func BenchmarkRunningOutputAddWrite(b *testing.B) {
-	conf := &OutputConfig{
-		Filter: Filter{},
-	}
-
-	m := &perfOutput{}
-	ro := NewRunningOutput(m, conf, 1000, 10000)
-
-	for n := 0; n < b.N; n++ {
-		ro.AddMetric(testutil.TestMetric(101, "metric1"))
-		ro.Write() //nolint: errcheck // skip checking err for benchmark tests
-	}
-}
-
-// Benchmark adding metrics.
-func BenchmarkRunningOutputAddWriteEvery100(b *testing.B) {
-	conf := &OutputConfig{
-		Filter: Filter{},
-	}
-
-	m := &perfOutput{}
-	ro := NewRunningOutput(m, conf, 1000, 10000)
-
-	for n := 0; n < b.N; n++ {
-		ro.AddMetric(testutil.TestMetric(101, "metric1"))
-		if n%100 == 0 {
-			ro.Write() //nolint: errcheck // skip checking err for benchmark tests
-		}
-	}
-}
-
-// Benchmark adding metrics.
-func BenchmarkRunningOutputAddFailWrites(b *testing.B) {
-	conf := &OutputConfig{
-		Filter: Filter{},
-	}
-
-	m := &perfOutput{}
-	m.failWrite = true
-	ro := NewRunningOutput(m, conf, 1000, 10000)
-
-	for n := 0; n < b.N; n++ {
-		ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	}
-}
-
 // Test that NameDrop filters ger properly applied.
-func TestRunningOutput_DropFilter(t *testing.T) {
+func TestRunningOutputDropFilter(t *testing.T) {
 	conf := &OutputConfig{
 		Filter: Filter{
 			NameDrop: []string{"metric1", "metric2"},
@@ -94,7 +48,7 @@ func TestRunningOutput_DropFilter(t *testing.T) {
 	for _, metric := range next5 {
 		ro.AddMetric(metric)
 	}
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -102,7 +56,7 @@ func TestRunningOutput_DropFilter(t *testing.T) {
 }
 
 // Test that NameDrop filters without a match do nothing.
-func TestRunningOutput_PassFilter(t *testing.T) {
+func TestRunningOutputPassFilter(t *testing.T) {
 	conf := &OutputConfig{
 		Filter: Filter{
 			NameDrop: []string{"metric1000", "foo*"},
@@ -119,7 +73,7 @@ func TestRunningOutput_PassFilter(t *testing.T) {
 	for _, metric := range next5 {
 		ro.AddMetric(metric)
 	}
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -127,7 +81,7 @@ func TestRunningOutput_PassFilter(t *testing.T) {
 }
 
 // Test that tags are properly included
-func TestRunningOutput_TagIncludeNoMatch(t *testing.T) {
+func TestRunningOutputTagIncludeNoMatch(t *testing.T) {
 	conf := &OutputConfig{
 		Filter: Filter{
 			TagInclude: []string{"nothing*"},
@@ -139,7 +93,7 @@ func TestRunningOutput_TagIncludeNoMatch(t *testing.T) {
 	ro := NewRunningOutput(m, conf, 1000, 10000)
 
 	ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -148,7 +102,7 @@ func TestRunningOutput_TagIncludeNoMatch(t *testing.T) {
 }
 
 // Test that tags are properly excluded
-func TestRunningOutput_TagExcludeMatch(t *testing.T) {
+func TestRunningOutputTagExcludeMatch(t *testing.T) {
 	conf := &OutputConfig{
 		Filter: Filter{
 			TagExclude: []string{"tag*"},
@@ -160,16 +114,16 @@ func TestRunningOutput_TagExcludeMatch(t *testing.T) {
 	ro := NewRunningOutput(m, conf, 1000, 10000)
 
 	ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
 	require.Len(t, m.Metrics(), 1)
-	require.Len(t, m.Metrics()[0].Tags(), 0)
+	require.Empty(t, m.Metrics()[0].Tags())
 }
 
 // Test that tags are properly Excluded
-func TestRunningOutput_TagExcludeNoMatch(t *testing.T) {
+func TestRunningOutputTagExcludeNoMatch(t *testing.T) {
 	conf := &OutputConfig{
 		Filter: Filter{
 			TagExclude: []string{"nothing*"},
@@ -181,7 +135,7 @@ func TestRunningOutput_TagExcludeNoMatch(t *testing.T) {
 	ro := NewRunningOutput(m, conf, 1000, 10000)
 
 	ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -190,7 +144,7 @@ func TestRunningOutput_TagExcludeNoMatch(t *testing.T) {
 }
 
 // Test that tags are properly included
-func TestRunningOutput_TagIncludeMatch(t *testing.T) {
+func TestRunningOutputTagIncludeMatch(t *testing.T) {
 	conf := &OutputConfig{
 		Filter: Filter{
 			TagInclude: []string{"tag*"},
@@ -202,7 +156,7 @@ func TestRunningOutput_TagIncludeMatch(t *testing.T) {
 	ro := NewRunningOutput(m, conf, 1000, 10000)
 
 	ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -211,7 +165,7 @@ func TestRunningOutput_TagIncludeMatch(t *testing.T) {
 }
 
 // Test that measurement name overriding correctly
-func TestRunningOutput_NameOverride(t *testing.T) {
+func TestRunningOutputNameOverride(t *testing.T) {
 	conf := &OutputConfig{
 		NameOverride: "new_metric_name",
 	}
@@ -220,7 +174,7 @@ func TestRunningOutput_NameOverride(t *testing.T) {
 	ro := NewRunningOutput(m, conf, 1000, 10000)
 
 	ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -229,7 +183,7 @@ func TestRunningOutput_NameOverride(t *testing.T) {
 }
 
 // Test that measurement name prefix is added correctly
-func TestRunningOutput_NamePrefix(t *testing.T) {
+func TestRunningOutputNamePrefix(t *testing.T) {
 	conf := &OutputConfig{
 		NamePrefix: "prefix_",
 	}
@@ -238,7 +192,7 @@ func TestRunningOutput_NamePrefix(t *testing.T) {
 	ro := NewRunningOutput(m, conf, 1000, 10000)
 
 	ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -247,7 +201,7 @@ func TestRunningOutput_NamePrefix(t *testing.T) {
 }
 
 // Test that measurement name suffix is added correctly
-func TestRunningOutput_NameSuffix(t *testing.T) {
+func TestRunningOutputNameSuffix(t *testing.T) {
 	conf := &OutputConfig{
 		NameSuffix: "_suffix",
 	}
@@ -256,7 +210,7 @@ func TestRunningOutput_NameSuffix(t *testing.T) {
 	ro := NewRunningOutput(m, conf, 1000, 10000)
 
 	ro.AddMetric(testutil.TestMetric(101, "metric1"))
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -279,7 +233,7 @@ func TestRunningOutputDefault(t *testing.T) {
 	for _, metric := range next5 {
 		ro.AddMetric(metric)
 	}
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	err := ro.Write()
 	require.NoError(t, err)
@@ -291,8 +245,7 @@ func TestRunningOutputWriteFail(t *testing.T) {
 		Filter: Filter{},
 	}
 
-	m := &mockOutput{}
-	m.failWrite = true
+	m := &mockOutput{failWrite: true}
 	ro := NewRunningOutput(m, conf, 4, 12)
 
 	// Fill buffer to limit twice
@@ -303,13 +256,13 @@ func TestRunningOutputWriteFail(t *testing.T) {
 		ro.AddMetric(metric)
 	}
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	// manual write fails
 	err := ro.Write()
 	require.Error(t, err)
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	m.failWrite = false
 	err = ro.Write()
@@ -324,8 +277,7 @@ func TestRunningOutputWriteFailOrder(t *testing.T) {
 		Filter: Filter{},
 	}
 
-	m := &mockOutput{}
-	m.failWrite = true
+	m := &mockOutput{failWrite: true}
 	ro := NewRunningOutput(m, conf, 100, 1000)
 
 	// add 5 metrics
@@ -333,13 +285,13 @@ func TestRunningOutputWriteFailOrder(t *testing.T) {
 		ro.AddMetric(metric)
 	}
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	// Write fails
 	err := ro.Write()
 	require.Error(t, err)
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	m.failWrite = false
 	// add 5 more metrics
@@ -362,8 +314,7 @@ func TestRunningOutputWriteFailOrder2(t *testing.T) {
 		Filter: Filter{},
 	}
 
-	m := &mockOutput{}
-	m.failWrite = true
+	m := &mockOutput{failWrite: true}
 	ro := NewRunningOutput(m, conf, 5, 100)
 
 	// add 5 metrics
@@ -374,7 +325,7 @@ func TestRunningOutputWriteFailOrder2(t *testing.T) {
 	err := ro.Write()
 	require.Error(t, err)
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	// add 5 metrics
 	for _, metric := range next5 {
@@ -384,7 +335,7 @@ func TestRunningOutputWriteFailOrder2(t *testing.T) {
 	err = ro.Write()
 	require.Error(t, err)
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	// add 5 metrics
 	for _, metric := range first5 {
@@ -394,7 +345,7 @@ func TestRunningOutputWriteFailOrder2(t *testing.T) {
 	err = ro.Write()
 	require.Error(t, err)
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	// add 5 metrics
 	for _, metric := range next5 {
@@ -404,7 +355,7 @@ func TestRunningOutputWriteFailOrder2(t *testing.T) {
 	err = ro.Write()
 	require.Error(t, err)
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	m.failWrite = false
 	err = ro.Write()
@@ -426,8 +377,7 @@ func TestRunningOutputWriteFailOrder3(t *testing.T) {
 		Filter: Filter{},
 	}
 
-	m := &mockOutput{}
-	m.failWrite = true
+	m := &mockOutput{failWrite: true}
 	ro := NewRunningOutput(m, conf, 5, 1000)
 
 	// add 5 metrics
@@ -435,13 +385,13 @@ func TestRunningOutputWriteFailOrder3(t *testing.T) {
 		ro.AddMetric(metric)
 	}
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	// Write fails
 	err := ro.Write()
 	require.Error(t, err)
 	// no successful flush yet
-	require.Len(t, m.Metrics(), 0)
+	require.Empty(t, m.Metrics())
 
 	// add and attempt to write a single metric:
 	ro.AddMetric(next5[0])
@@ -460,7 +410,7 @@ func TestRunningOutputWriteFailOrder3(t *testing.T) {
 	require.Equal(t, expected, m.Metrics())
 }
 
-func TestInternalMetrics(t *testing.T) {
+func TestRunningOutputInternalMetrics(t *testing.T) {
 	_ = NewRunningOutput(
 		&mockOutput{},
 		&OutputConfig{
@@ -487,6 +437,7 @@ func TestInternalMetrics(t *testing.T) {
 				"metrics_filtered": 0,
 				"metrics_written":  0,
 				"write_time_ns":    0,
+				"startup_errors":   0,
 			},
 			time.Unix(0, 0),
 		),
@@ -503,6 +454,289 @@ func TestInternalMetrics(t *testing.T) {
 	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime())
 }
 
+func TestRunningOutputStartupBehaviorInvalid(t *testing.T) {
+	ro := NewRunningOutput(
+		&mockOutput{},
+		&OutputConfig{
+			Filter:               Filter{},
+			Name:                 "test_name",
+			Alias:                "test_alias",
+			StartupErrorBehavior: "foo",
+		},
+		5, 10,
+	)
+	require.ErrorContains(t, ro.Init(), "invalid 'startup_error_behavior'")
+}
+
+func TestRunningOutputRetryableStartupBehaviorDefault(t *testing.T) {
+	serr := &internal.StartupError{
+		Err:   errors.New("retryable err"),
+		Retry: true,
+	}
+	ro := NewRunningOutput(
+		&mockOutput{
+			startupErrorCount: 1,
+			startupError:      serr,
+		},
+		&OutputConfig{
+			Filter: Filter{},
+			Name:   "test_name",
+			Alias:  "test_alias",
+		},
+		5, 10,
+	)
+	require.NoError(t, ro.Init())
+
+	// If Connect() fails, the agent will stop
+	require.ErrorIs(t, ro.Connect(), serr)
+	require.False(t, ro.started)
+}
+
+func TestRunningOutputRetryableStartupBehaviorError(t *testing.T) {
+	serr := &internal.StartupError{
+		Err:   errors.New("retryable err"),
+		Retry: true,
+	}
+	ro := NewRunningOutput(
+		&mockOutput{
+			startupErrorCount: 1,
+			startupError:      serr,
+		},
+		&OutputConfig{
+			Filter:               Filter{},
+			Name:                 "test_name",
+			Alias:                "test_alias",
+			StartupErrorBehavior: "error",
+		},
+		5, 10,
+	)
+	require.NoError(t, ro.Init())
+
+	// If Connect() fails, the agent will stop
+	require.ErrorIs(t, ro.Connect(), serr)
+	require.False(t, ro.started)
+}
+
+func TestRunningOutputRetryableStartupBehaviorRetry(t *testing.T) {
+	serr := &internal.StartupError{
+		Err:   errors.New("retryable err"),
+		Retry: true,
+	}
+	mo := &mockOutput{
+		startupErrorCount: 2,
+		startupError:      serr,
+	}
+	ro := NewRunningOutput(
+		mo,
+		&OutputConfig{
+			Filter:               Filter{},
+			Name:                 "test_name",
+			Alias:                "test_alias",
+			StartupErrorBehavior: "retry",
+		},
+		5, 10,
+	)
+	require.NoError(t, ro.Init())
+
+	// For retry, Connect() should succeed even though there is an error but
+	// should return an error on Write() until we successfully connect.
+	require.NotErrorIs(t, ro.Connect(), serr)
+	require.False(t, ro.started)
+
+	ro.AddMetric(testutil.TestMetric(1))
+	require.ErrorIs(t, ro.Write(), internal.ErrNotConnected)
+	require.False(t, ro.started)
+
+	ro.AddMetric(testutil.TestMetric(2))
+	require.NoError(t, ro.Write())
+	require.True(t, ro.started)
+	require.Equal(t, 1, mo.writes)
+
+	ro.AddMetric(testutil.TestMetric(3))
+	require.NoError(t, ro.Write())
+	require.True(t, ro.started)
+	require.Equal(t, 2, mo.writes)
+}
+
+func TestRunningOutputRetryableStartupBehaviorIgnore(t *testing.T) {
+	serr := &internal.StartupError{
+		Err:   errors.New("retryable err"),
+		Retry: true,
+	}
+	mo := &mockOutput{
+		startupErrorCount: 2,
+		startupError:      serr,
+	}
+	ro := NewRunningOutput(
+		mo,
+		&OutputConfig{
+			Filter:               Filter{},
+			Name:                 "test_name",
+			Alias:                "test_alias",
+			StartupErrorBehavior: "ignore",
+		},
+		5, 10,
+	)
+	require.NoError(t, ro.Init())
+
+	// For ignore, Connect() should return a fatal error if connection fails.
+	// This will force the agent to remove the plugin.
+	var fatalErr *internal.FatalError
+	require.ErrorAs(t, ro.Connect(), &fatalErr)
+	require.ErrorIs(t, fatalErr, serr)
+	require.False(t, ro.started)
+}
+
+func TestRunningOutputNonRetryableStartupBehaviorDefault(t *testing.T) {
+	serr := &internal.StartupError{
+		Err:   errors.New("non-retryable err"),
+		Retry: false,
+	}
+
+	for _, behavior := range []string{"", "error", "retry", "ignore"} {
+		t.Run(behavior, func(t *testing.T) {
+			mo := &mockOutput{
+				startupErrorCount: 2,
+				startupError:      serr,
+			}
+			ro := NewRunningOutput(
+				mo,
+				&OutputConfig{
+					Filter:               Filter{},
+					Name:                 "test_name",
+					Alias:                "test_alias",
+					StartupErrorBehavior: behavior,
+				},
+				5, 10,
+			)
+			require.NoError(t, ro.Init())
+
+			// Non-retryable error should pass through and in turn the agent
+			// will stop and exit.
+			require.ErrorIs(t, ro.Connect(), serr)
+			require.False(t, ro.started)
+		})
+	}
+}
+
+func TestRunningOutputUntypedtartupBehaviorIgnore(t *testing.T) {
+	serr := errors.New("untyped err")
+
+	for _, behavior := range []string{"", "error", "retry", "ignore"} {
+		t.Run(behavior, func(t *testing.T) {
+			mo := &mockOutput{
+				startupErrorCount: 2,
+				startupError:      serr,
+			}
+			ro := NewRunningOutput(
+				mo,
+				&OutputConfig{
+					Filter:               Filter{},
+					Name:                 "test_name",
+					Alias:                "test_alias",
+					StartupErrorBehavior: behavior,
+				},
+				5, 10,
+			)
+			require.NoError(t, ro.Init())
+
+			// Untyped error should pass through and in turn the agent will
+			// stop and exit.
+			require.ErrorIs(t, ro.Connect(), serr)
+			require.False(t, ro.started)
+		})
+	}
+}
+
+func TestRunningOutputPartiallyStarted(t *testing.T) {
+	serr := &internal.StartupError{
+		Err:     errors.New("partial err"),
+		Retry:   true,
+		Partial: true,
+	}
+	mo := &mockOutput{
+		startupErrorCount: 2,
+		startupError:      serr,
+	}
+	ro := NewRunningOutput(
+		mo,
+		&OutputConfig{
+			Filter:               Filter{},
+			Name:                 "test_name",
+			Alias:                "test_alias",
+			StartupErrorBehavior: "retry",
+		},
+		5, 10,
+	)
+	require.NoError(t, ro.Init())
+
+	// For retry, Connect() should succeed even though there is an error but
+	// should return an error on Write() until we successfully connect.
+	require.NotErrorIs(t, ro.Connect(), serr)
+	require.False(t, ro.started)
+
+	ro.AddMetric(testutil.TestMetric(1))
+	require.NoError(t, ro.Write())
+	require.False(t, ro.started)
+	require.Equal(t, 1, mo.writes)
+
+	ro.AddMetric(testutil.TestMetric(2))
+	require.NoError(t, ro.Write())
+	require.True(t, ro.started)
+	require.Equal(t, 2, mo.writes)
+
+	ro.AddMetric(testutil.TestMetric(3))
+	require.NoError(t, ro.Write())
+	require.True(t, ro.started)
+	require.Equal(t, 3, mo.writes)
+}
+
+// Benchmark adding metrics.
+func BenchmarkRunningOutputAddWrite(b *testing.B) {
+	conf := &OutputConfig{
+		Filter: Filter{},
+	}
+
+	m := &perfOutput{}
+	ro := NewRunningOutput(m, conf, 1000, 10000)
+
+	for n := 0; n < b.N; n++ {
+		ro.AddMetric(testutil.TestMetric(101, "metric1"))
+		ro.Write() //nolint:errcheck // skip checking err for benchmark tests
+	}
+}
+
+// Benchmark adding metrics.
+func BenchmarkRunningOutputAddWriteEvery100(b *testing.B) {
+	conf := &OutputConfig{
+		Filter: Filter{},
+	}
+
+	m := &perfOutput{}
+	ro := NewRunningOutput(m, conf, 1000, 10000)
+
+	for n := 0; n < b.N; n++ {
+		ro.AddMetric(testutil.TestMetric(101, "metric1"))
+		if n%100 == 0 {
+			ro.Write() //nolint:errcheck // skip checking err for benchmark tests
+		}
+	}
+}
+
+// Benchmark adding metrics.
+func BenchmarkRunningOutputAddFailWrites(b *testing.B) {
+	conf := &OutputConfig{
+		Filter: Filter{},
+	}
+
+	m := &perfOutput{failWrite: true}
+	ro := NewRunningOutput(m, conf, 1000, 10000)
+
+	for n := 0; n < b.N; n++ {
+		ro.AddMetric(testutil.TestMetric(101, "metric1"))
+	}
+}
+
 type mockOutput struct {
 	sync.Mutex
 
@@ -510,18 +744,24 @@ type mockOutput struct {
 
 	// if true, mock write failure
 	failWrite bool
+
+	startupError      error
+	startupErrorCount int
+	writes            int
 }
 
 func (m *mockOutput) Connect() error {
-	return nil
+	if m.startupErrorCount == 0 {
+		return nil
+	}
+	if m.startupErrorCount > 0 {
+		m.startupErrorCount--
+	}
+	return m.startupError
 }
 
 func (m *mockOutput) Close() error {
 	return nil
-}
-
-func (m *mockOutput) Description() string {
-	return ""
 }
 
 func (m *mockOutput) SampleConfig() string {
@@ -529,14 +769,12 @@ func (m *mockOutput) SampleConfig() string {
 }
 
 func (m *mockOutput) Write(metrics []telegraf.Metric) error {
+	m.writes++
+
 	m.Lock()
 	defer m.Unlock()
 	if m.failWrite {
-		return fmt.Errorf("failed write")
-	}
-
-	if m.metrics == nil {
-		m.metrics = []telegraf.Metric{}
+		return errors.New("failed write")
 	}
 
 	m.metrics = append(m.metrics, metrics...)
@@ -554,25 +792,21 @@ type perfOutput struct {
 	failWrite bool
 }
 
-func (m *perfOutput) Connect() error {
+func (*perfOutput) Connect() error {
 	return nil
 }
 
-func (m *perfOutput) Close() error {
+func (*perfOutput) Close() error {
 	return nil
 }
 
-func (m *perfOutput) Description() string {
+func (*perfOutput) SampleConfig() string {
 	return ""
 }
 
-func (m *perfOutput) SampleConfig() string {
-	return ""
-}
-
-func (m *perfOutput) Write(_ []telegraf.Metric) error {
+func (m *perfOutput) Write([]telegraf.Metric) error {
 	if m.failWrite {
-		return fmt.Errorf("failed write")
+		return errors.New("failed write")
 	}
 	return nil
 }

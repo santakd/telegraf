@@ -9,11 +9,12 @@ import (
 	"time"
 
 	eventhub "github.com/Azure/azure-event-hubs-go/v3"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/serializers/json"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
 )
 
 /*
@@ -128,7 +129,7 @@ func TestInitAndWriteIntegration(t *testing.T) {
 	require.NoError(t, err)
 
 	// The handler function will pass received messages via the channel
-	handler := func(ctx context.Context, event *eventhub.Event) error {
+	handler := func(_ context.Context, event *eventhub.Event) error {
 		exit <- string(event.Data)
 		return nil
 	}
@@ -157,5 +158,5 @@ wait:
 	}
 
 	// Make sure received == sent
-	require.Equal(t, received, len(metrics))
+	require.Len(t, metrics, received)
 }

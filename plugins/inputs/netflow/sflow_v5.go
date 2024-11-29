@@ -5,11 +5,13 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"time"
 
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
-	"github.com/netsampler/goflow2/decoders/sflow"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/netsampler/goflow2/v2/decoders/sflow"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
@@ -17,13 +19,13 @@ import (
 
 // Decoder structure
 type sflowv5Decoder struct {
-	Log telegraf.Logger
+	log telegraf.Logger
 
 	warnedCounterRaw map[uint32]bool
 	warnedFlowRaw    map[int64]bool
 }
 
-func (d *sflowv5Decoder) Init() error {
+func (d *sflowv5Decoder) init() error {
 	if err := initL4ProtoMapping(); err != nil {
 		return fmt.Errorf("initializing layer 4 protocol mapping failed: %w", err)
 	}
@@ -33,23 +35,18 @@ func (d *sflowv5Decoder) Init() error {
 	return nil
 }
 
-func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric, error) {
+func (d *sflowv5Decoder) decode(srcIP net.IP, payload []byte) ([]telegraf.Metric, error) {
+	t := time.Now()
 	src := srcIP.String()
 
 	// Decode the message
+	var msg sflow.Packet
 	buf := bytes.NewBuffer(payload)
-	packet, err := sflow.DecodeMessage(buf)
-	if err != nil {
+	if err := sflow.DecodeMessageVersion(buf, &msg); err != nil {
 		return nil, err
 	}
 
 	// Extract metrics
-	msg, ok := packet.(sflow.Packet)
-	if !ok {
-		return nil, fmt.Errorf("unexpected message type %T", packet)
-	}
-
-	t := time.Unix(0, int64(msg.Uptime)*int64(time.Millisecond))
 	metrics := make([]telegraf.Metric, 0, len(msg.Samples))
 	for _, s := range msg.Samples {
 		tags := map[string]string{
@@ -62,7 +59,6 @@ func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 			fields := map[string]interface{}{
 				"ip_version":        decodeSflowIPVersion(msg.IPVersion),
 				"sys_uptime":        msg.Uptime,
-				"agent_ip":          decodeIP(msg.AgentIP),
 				"agent_subid":       msg.SubAgentId,
 				"seq_number":        sample.Header.SampleSequenceNumber,
 				"sampling_interval": sample.SamplingRate,
@@ -70,6 +66,13 @@ func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 				"sampling_drops":    sample.Drops,
 				"in_snmp":           sample.Input,
 			}
+
+			var err error
+			fields["agent_ip"], err = decodeIP(msg.AgentIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'agent_ip' failed: %w", err)
+			}
+
 			if sample.Output>>31 == 0 {
 				fields["out_snmp"] = sample.Output & 0x7fffffff
 			}
@@ -95,7 +98,6 @@ func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 			fields := map[string]interface{}{
 				"ip_version":        decodeSflowIPVersion(msg.IPVersion),
 				"sys_uptime":        msg.Uptime,
-				"agent_ip":          decodeIP(msg.AgentIP),
 				"agent_subid":       msg.SubAgentId,
 				"seq_number":        sample.Header.SampleSequenceNumber,
 				"sampling_interval": sample.SamplingRate,
@@ -103,6 +105,13 @@ func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 				"sampling_drops":    sample.Drops,
 				"in_snmp":           sample.InputIfValue,
 			}
+
+			var err error
+			fields["agent_ip"], err = decodeIP(msg.AgentIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'agent_ip' failed: %w", err)
+			}
+
 			if sample.OutputIfFormat == 0 {
 				fields["out_snmp"] = sample.OutputIfValue
 			}
@@ -128,10 +137,16 @@ func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 			fields := map[string]interface{}{
 				"ip_version":  decodeSflowIPVersion(msg.IPVersion),
 				"sys_uptime":  msg.Uptime,
-				"agent_ip":    decodeIP(msg.AgentIP),
 				"agent_subid": msg.SubAgentId,
 				"seq_number":  sample.Header.SampleSequenceNumber,
 			}
+
+			var err error
+			fields["agent_ip"], err = decodeIP(msg.AgentIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'agent_ip' failed: %w", err)
+			}
+
 			// Decode the source information
 			if name := decodeSflowSourceInterface(sample.Header.SourceIdType); name != "" {
 				fields[name] = sample.Header.SourceIdValue
@@ -144,6 +159,43 @@ func (d *sflowv5Decoder) Decode(srcIP net.IP, payload []byte) ([]telegraf.Metric
 				fields[k] = v
 			}
 			metrics = append(metrics, metric.New("netflow", tags, fields, t))
+		case sflow.DropSample:
+			fields := map[string]interface{}{
+				"ip_version":     decodeSflowIPVersion(msg.IPVersion),
+				"sys_uptime":     msg.Uptime,
+				"agent_subid":    msg.SubAgentId,
+				"seq_number":     sample.Header.SampleSequenceNumber,
+				"sampling_drops": sample.Drops,
+				"in_snmp":        sample.Input,
+				"out_snmp":       sample.Output,
+				"reason":         sample.Reason,
+			}
+
+			var err error
+			fields["agent_ip"], err = decodeIP(msg.AgentIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'agent_ip' failed: %w", err)
+			}
+
+			// Decode the source information
+			if name := decodeSflowSourceInterface(sample.Header.SourceIdType); name != "" {
+				fields[name] = sample.Header.SourceIdValue
+			}
+			// Decode the sampling direction
+			if sample.Header.SourceIdValue == sample.Input {
+				fields["direction"] = "ingress"
+			} else {
+				fields["direction"] = "egress"
+			}
+			recordFields, err := d.decodeFlowRecords(sample.Records)
+			if err != nil {
+				return nil, err
+			}
+			for k, v := range recordFields {
+				fields[k] = v
+			}
+			metrics = append(metrics, metric.New("netflow", tags, fields, t))
+
 		default:
 			return nil, fmt.Errorf("unknown record type %T", s)
 		}
@@ -170,45 +222,109 @@ func (d *sflowv5Decoder) decodeFlowRecords(records []sflow.FlowRecord) (map[stri
 				fields[k] = v
 			}
 		case sflow.SampledEthernet:
+			var err error
 			fields["eth_total_len"] = record.Length
-			fields["in_src_mac"] = decodeMAC(record.SrcMac)
-			fields["out_dst_mac"] = decodeMAC(record.DstMac)
+			fields["in_src_mac"], err = decodeMAC(record.SrcMac)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'in_src_mac' failed: %w", err)
+			}
+			fields["out_dst_mac"], err = decodeMAC(record.DstMac)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'out_dst_mac' failed: %w", err)
+			}
 			fields["datalink_frame_type"] = layers.EthernetType(record.EthType & 0x0000ffff).String()
 		case sflow.SampledIPv4:
-			fields["ipv4_total_len"] = record.Base.Length
-			fields["protocol"] = mapL4Proto(uint8(record.Base.Protocol & 0x000000ff))
-			fields["src"] = decodeIP(record.Base.SrcIP)
-			fields["dst"] = decodeIP(record.Base.DstIP)
-			fields["src_port"] = record.Base.SrcPort
-			fields["dst_port"] = record.Base.DstPort
+			var err error
+			fields["ipv4_total_len"] = record.Length
+			fields["protocol"] = mapL4Proto(uint8(record.Protocol & 0x000000ff))
+			fields["src"], err = decodeIP(record.SrcIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'src' failed: %w", err)
+			}
+			fields["dst"], err = decodeIP(record.DstIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'dst' failed: %w", err)
+			}
+			fields["src_port"] = record.SrcPort
+			fields["dst_port"] = record.DstPort
 			fields["src_tos"] = record.Tos
-			fields["tcp_flags"] = decodeTCPFlags([]byte{byte(record.Base.TcpFlags & 0x000000ff)})
+			fields["tcp_flags"], err = decodeTCPFlags([]byte{byte(record.TcpFlags & 0x000000ff)})
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'tcp_flags' failed: %w", err)
+			}
 		case sflow.SampledIPv6:
-			fields["ipv6_total_len"] = record.Base.Length
-			fields["protocol"] = mapL4Proto(uint8(record.Base.Protocol & 0x000000ff))
-			fields["src"] = decodeIP(record.Base.SrcIP)
-			fields["dst"] = decodeIP(record.Base.DstIP)
-			fields["src_port"] = record.Base.SrcPort
-			fields["dst_port"] = record.Base.DstPort
-			fields["tcp_flags"] = decodeTCPFlags([]byte{byte(record.Base.TcpFlags & 0x000000ff)})
+			var err error
+			fields["ipv6_total_len"] = record.Length
+			fields["protocol"] = mapL4Proto(uint8(record.Protocol & 0x000000ff))
+			fields["src"], err = decodeIP(record.SrcIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'src' failed: %w", err)
+			}
+			fields["dst"], err = decodeIP(record.DstIP)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'dst' failed: %w", err)
+			}
+			fields["src_port"] = record.SrcPort
+			fields["dst_port"] = record.DstPort
+			fields["tcp_flags"], err = decodeTCPFlags([]byte{byte(record.TcpFlags & 0x000000ff)})
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'tcp_flags' failed: %w", err)
+			}
 		case sflow.ExtendedSwitch:
 			fields["vlan_src"] = record.SrcVlan
 			fields["vlan_src_priority"] = record.SrcPriority
 			fields["vlan_dst"] = record.DstVlan
 			fields["vlan_dst_priority"] = record.DstPriority
 		case sflow.ExtendedRouter:
-			fields["next_hop"] = decodeIP(record.NextHop)
+			var err error
+			fields["next_hop"], err = decodeIP(record.NextHop)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'next_hop' failed: %w", err)
+			}
 			fields["src_mask"] = record.SrcMaskLen
 			fields["dst_mask"] = record.DstMaskLen
 		case sflow.ExtendedGateway:
-			fields["next_hop"] = decodeIP(record.NextHop)
+			var err error
+			fields["next_hop_ip_version"] = record.NextHopIPVersion
+			fields["next_hop"], err = decodeIP(record.NextHop)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'next_hop' failed: %w", err)
+			}
+			fields["bgp_as"] = record.AS
 			fields["bgp_src_as"] = record.SrcAS
 			fields["bgp_dst_as"] = record.ASDestinations
-			fields["bgp_next_hop"] = decodeIP(record.NextHop)
+			fields["bgp_as_path_type"] = record.ASPathType
+			fields["bgp_as_path_length"] = record.ASPathLength
+			fields["bgp_next_hop"], err = decodeIP(record.NextHop)
+			if err != nil {
+				return nil, fmt.Errorf("decoding 'bgp_next_hop' failed: %w", err)
+			}
 			fields["bgp_prev_as"] = record.SrcPeerAS
 			if len(record.ASPath) > 0 {
 				fields["bgp_next_as"] = record.ASPath[0]
 			}
+			fields["community_length"] = record.CommunitiesLength
+			parts := make([]string, 0, len(record.Communities))
+			for _, c := range record.Communities {
+				parts = append(parts, "0x"+strconv.FormatUint(uint64(c), 16))
+			}
+			fields["communities"] = strings.Join(parts, ",")
+			fields["local_pref"] = record.LocalPref
+		case sflow.EgressQueue:
+			fields["out_queue"] = record.Queue
+		case sflow.ExtendedACL:
+			fields["acl_id"] = record.Number
+			fields["acl_name"] = record.Name
+			switch record.Direction {
+			case 1:
+				fields["direction"] = "ingress"
+			case 2:
+				fields["direction"] = "egress"
+			default:
+				fields["direction"] = "unknown"
+			}
+		case sflow.ExtendedFunction:
+			fields["function"] = record.Symbol
 		default:
 			return nil, fmt.Errorf("unhandled flow record type %T", r.Data)
 		}
@@ -253,8 +369,8 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 	for _, pkt := range packet.Layers() {
 		switch l := pkt.(type) {
 		case *layers.Ethernet:
-			fields["in_src_mac"] = l.SrcMAC
-			fields["out_dst_mac"] = l.DstMAC
+			fields["in_src_mac"] = l.SrcMAC.String()
+			fields["out_dst_mac"] = l.DstMAC.String()
 			fields["datalink_frame_type"] = l.EthernetType.String()
 			if l.Length > 0 {
 				fields["eth_header_len"] = l.Length
@@ -295,8 +411,8 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			fields["dst"] = l.DstIP.String()
 			fields["ip_total_len"] = l.Length
 		case *layers.TCP:
-			fields["src_port"] = l.SrcPort
-			fields["dst_port"] = l.DstPort
+			fields["src_port"] = uint16(l.SrcPort)
+			fields["dst_port"] = uint16(l.DstPort)
 			fields["tcp_seq_number"] = l.Seq
 			fields["tcp_ack_number"] = l.Ack
 			fields["tcp_window_size"] = l.Window
@@ -322,8 +438,8 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			}
 			fields["tcp_flags"] = string(flags)
 		case *layers.UDP:
-			fields["src_port"] = l.SrcPort
-			fields["dst_port"] = l.DstPort
+			fields["src_port"] = uint16(l.SrcPort)
+			fields["dst_port"] = uint16(l.DstPort)
 			fields["ip_total_len"] = l.Length
 		case *gopacket.Payload:
 			// Ignore the payload
@@ -332,11 +448,11 @@ func (d *sflowv5Decoder) decodeRawHeaderSample(record *sflow.SampledHeader) (map
 			if !d.warnedFlowRaw[ltype] {
 				contents := hex.EncodeToString(pkt.LayerContents())
 				payload := hex.EncodeToString(pkt.LayerPayload())
-				d.Log.Warnf("Unknown flow raw flow message %s (%d):", pkt.LayerType().String(), pkt.LayerType())
-				d.Log.Warnf("  contents: %s", contents)
-				d.Log.Warnf("  payload:  %s", payload)
+				d.log.Warnf("Unknown flow raw flow message %s (%d):", pkt.LayerType().String(), pkt.LayerType())
+				d.log.Warnf("  contents: %s", contents)
+				d.log.Warnf("  payload:  %s", payload)
 
-				d.Log.Warn("This message is only printed once.")
+				d.log.Warn("This message is only printed once.")
 			}
 			d.warnedFlowRaw[ltype] = true
 		}
@@ -394,7 +510,7 @@ func (d *sflowv5Decoder) decodeCounterRecords(records []sflow.CounterRecord) (ma
 				"errors_symbols":          record.Dot3StatsSymbolErrors,
 			}
 			return fields, nil
-		case *sflow.FlowRecordRaw:
+		case sflow.RawRecord:
 			switch r.Header.DataFormat {
 			case 1005:
 				// Openflow port-name
@@ -408,8 +524,8 @@ func (d *sflowv5Decoder) decodeCounterRecords(records []sflow.CounterRecord) (ma
 			default:
 				if !d.warnedCounterRaw[r.Header.DataFormat] {
 					data := hex.EncodeToString(record.Data)
-					d.Log.Warnf("Unknown counter raw flow message %d: %s", r.Header.DataFormat, data)
-					d.Log.Warn("This message is only printed once.")
+					d.log.Warnf("Unknown counter raw flow message %d: %s", r.Header.DataFormat, data)
+					d.log.Warn("This message is only printed once.")
 				}
 				d.warnedCounterRaw[r.Header.DataFormat] = true
 			}

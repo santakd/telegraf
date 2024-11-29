@@ -116,10 +116,10 @@ func (g *Gatherer) generatePoints(metric Metric, responses []ReadResponse) ([]po
 func mergeTags(metricTags, outerTags map[string]string) map[string]string {
 	tags := make(map[string]string)
 	for k, v := range outerTags {
-		tags[k] = v
+		tags[k] = strings.Trim(v, `'"`)
 	}
 	for k, v := range metricTags {
-		tags[k] = v
+		tags[k] = strings.Trim(v, `'"`)
 	}
 
 	return tags
@@ -200,7 +200,7 @@ func makeReadRequests(metrics []Metric) []ReadRequest {
 		if len(metric.Paths) == 0 {
 			requests = append(requests, ReadRequest{
 				Mbean:      metric.Mbean,
-				Attributes: []string{},
+				Attributes: make([]string, 0),
 			})
 		} else {
 			attributes := make(map[string][]string)

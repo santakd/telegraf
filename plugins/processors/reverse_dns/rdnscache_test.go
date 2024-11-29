@@ -46,24 +46,23 @@ func TestParallelReverseDNSLookup(t *testing.T) {
 	defer d.Stop()
 
 	d.Resolver = &localResolver{}
-	var answer1 []string
-	var answer2 []string
+	var answer1, answer2 []string
+	var err1, err2 error
 	wg := &sync.WaitGroup{}
 	wg.Add(2)
 	go func() {
-		answer, err := d.Lookup("127.0.0.1")
-		require.NoError(t, err)
-		answer1 = answer
+		answer1, err1 = d.Lookup("127.0.0.1")
 		wg.Done()
 	}()
 	go func() {
-		answer, err := d.Lookup("127.0.0.1")
-		require.NoError(t, err)
-		answer2 = answer
+		answer2, err2 = d.Lookup("127.0.0.1")
 		wg.Done()
 	}()
 
 	wg.Wait()
+
+	require.NoError(t, err1)
+	require.NoError(t, err2)
 
 	t.Log(answer1)
 	t.Log(answer2)
@@ -105,7 +104,7 @@ func TestCleanupHappens(t *testing.T) {
 
 	time.Sleep(ttl) // wait for cache entry to expire.
 	d.cleanup()
-	require.Len(t, d.expireList, 0)
+	require.Empty(t, d.expireList)
 
 	stats := d.Stats()
 

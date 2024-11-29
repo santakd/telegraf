@@ -11,7 +11,7 @@ import (
 	"github.com/influxdata/telegraf/testutil"
 )
 
-func TestFilter_ApplyEmpty(t *testing.T) {
+func TestFilterApplyEmpty(t *testing.T) {
 	f := Filter{}
 	require.NoError(t, f.Compile())
 	require.False(t, f.IsActive())
@@ -25,7 +25,7 @@ func TestFilter_ApplyEmpty(t *testing.T) {
 	require.True(t, selected)
 }
 
-func TestFilter_ApplyTagsDontPass(t *testing.T) {
+func TestFilterApplyTagsDontPass(t *testing.T) {
 	filters := []TagFilter{
 		{
 			Name:   "cpu",
@@ -48,9 +48,9 @@ func TestFilter_ApplyTagsDontPass(t *testing.T) {
 	require.False(t, selected)
 }
 
-func TestFilter_ApplyDeleteFields(t *testing.T) {
+func TestFilterApplyDeleteFields(t *testing.T) {
 	f := Filter{
-		FieldDrop: []string{"value"},
+		FieldExclude: []string{"value"},
 	}
 	require.NoError(t, f.Compile())
 	require.NoError(t, f.Compile())
@@ -70,9 +70,9 @@ func TestFilter_ApplyDeleteFields(t *testing.T) {
 	require.Equal(t, map[string]interface{}{"value2": int64(2)}, m.Fields())
 }
 
-func TestFilter_ApplyDeleteAllFields(t *testing.T) {
+func TestFilterApplyDeleteAllFields(t *testing.T) {
 	f := Filter{
-		FieldDrop: []string{"value*"},
+		FieldExclude: []string{"value*"},
 	}
 	require.NoError(t, f.Compile())
 	require.NoError(t, f.Compile())
@@ -89,10 +89,10 @@ func TestFilter_ApplyDeleteAllFields(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, selected)
 	f.Modify(m)
-	require.Len(t, m.FieldList(), 0)
+	require.Empty(t, m.FieldList())
 }
 
-func TestFilter_Empty(t *testing.T) {
+func TestFilterEmpty(t *testing.T) {
 	f := Filter{}
 
 	measurements := []string{
@@ -106,13 +106,13 @@ func TestFilter_Empty(t *testing.T) {
 	}
 
 	for _, measurement := range measurements {
-		if !f.shouldFieldPass(measurement) {
+		if !f.shouldNamePass(measurement) {
 			t.Errorf("Expected measurement %s to pass", measurement)
 		}
 	}
 }
 
-func TestFilter_NamePass(t *testing.T) {
+func TestFilterNamePass(t *testing.T) {
 	f := Filter{
 		NamePass: []string{"foo*", "cpu_usage_idle"},
 	}
@@ -146,7 +146,43 @@ func TestFilter_NamePass(t *testing.T) {
 	}
 }
 
-func TestFilter_NameDrop(t *testing.T) {
+func TestFilterNamePass_WithSeparator(t *testing.T) {
+	f := Filter{
+		NamePass:           []string{"foo.*.bar", "foo.*.abc.*.bar"},
+		NamePassSeparators: ".,",
+	}
+	require.NoError(t, f.Compile())
+
+	passes := []string{
+		"foo..bar",
+		"foo.abc.bar",
+		"foo..abc..bar",
+		"foo.xyz.abc.xyz-xyz.bar",
+	}
+
+	drops := []string{
+		"foo.bar",
+		"foo.abc,.bar", // "abc," is not considered under * as ',' is specified as a separator
+		"foo..abc.bar", // ".abc" shall not be matched under * as '.' is specified as a separator
+		"foo.abc.abc.bar",
+		"foo.xyz.abc.xyz.xyz.bar",
+		"foo.xyz.abc.xyz,xyz.bar",
+	}
+
+	for _, measurement := range passes {
+		if !f.shouldNamePass(measurement) {
+			t.Errorf("Expected measurement %s to pass", measurement)
+		}
+	}
+
+	for _, measurement := range drops {
+		if f.shouldNamePass(measurement) {
+			t.Errorf("Expected measurement %s to drop", measurement)
+		}
+	}
+}
+
+func TestFilterNameDrop(t *testing.T) {
 	f := Filter{
 		NameDrop: []string{"foo*", "cpu_usage_idle"},
 	}
@@ -180,9 +216,45 @@ func TestFilter_NameDrop(t *testing.T) {
 	}
 }
 
-func TestFilter_FieldPass(t *testing.T) {
+func TestFilterNameDrop_WithSeparator(t *testing.T) {
 	f := Filter{
-		FieldPass: []string{"foo*", "cpu_usage_idle"},
+		NameDrop:           []string{"foo.*.bar", "foo.*.abc.*.bar"},
+		NameDropSeparators: ".,",
+	}
+	require.NoError(t, f.Compile())
+
+	drops := []string{
+		"foo..bar",
+		"foo.abc.bar",
+		"foo..abc..bar",
+		"foo.xyz.abc.xyz-xyz.bar",
+	}
+
+	passes := []string{
+		"foo.bar",
+		"foo.abc,.bar", // "abc," is not considered under * as ',' is specified as a separator
+		"foo..abc.bar", // ".abc" shall not be matched under * as '.' is specified as a separator
+		"foo.abc.abc.bar",
+		"foo.xyz.abc.xyz.xyz.bar",
+		"foo.xyz.abc.xyz,xyz.bar",
+	}
+
+	for _, measurement := range passes {
+		if !f.shouldNamePass(measurement) {
+			t.Errorf("Expected measurement %s to pass", measurement)
+		}
+	}
+
+	for _, measurement := range drops {
+		if f.shouldNamePass(measurement) {
+			t.Errorf("Expected measurement %s to drop", measurement)
+		}
+	}
+}
+
+func TestFilterFieldInclude(t *testing.T) {
+	f := Filter{
+		FieldInclude: []string{"foo*", "cpu_usage_idle"},
 	}
 	require.NoError(t, f.Compile())
 
@@ -201,22 +273,18 @@ func TestFilter_FieldPass(t *testing.T) {
 		"cpu_usage_busy",
 	}
 
-	for _, measurement := range passes {
-		if !f.shouldFieldPass(measurement) {
-			t.Errorf("Expected measurement %s to pass", measurement)
-		}
+	for _, field := range passes {
+		require.Truef(t, ShouldPassFilters(f.fieldIncludeFilter, f.fieldExcludeFilter, field), "Expected field %s to pass", field)
 	}
 
-	for _, measurement := range drops {
-		if f.shouldFieldPass(measurement) {
-			t.Errorf("Expected measurement %s to drop", measurement)
-		}
+	for _, field := range drops {
+		require.Falsef(t, ShouldPassFilters(f.fieldIncludeFilter, f.fieldExcludeFilter, field), "Expected field %s to drop", field)
 	}
 }
 
-func TestFilter_FieldDrop(t *testing.T) {
+func TestFilterFieldExclude(t *testing.T) {
 	f := Filter{
-		FieldDrop: []string{"foo*", "cpu_usage_idle"},
+		FieldExclude: []string{"foo*", "cpu_usage_idle"},
 	}
 	require.NoError(t, f.Compile())
 
@@ -235,20 +303,16 @@ func TestFilter_FieldDrop(t *testing.T) {
 		"cpu_usage_busy",
 	}
 
-	for _, measurement := range passes {
-		if !f.shouldFieldPass(measurement) {
-			t.Errorf("Expected measurement %s to pass", measurement)
-		}
+	for _, field := range passes {
+		require.Truef(t, ShouldPassFilters(f.fieldIncludeFilter, f.fieldExcludeFilter, field), "Expected field %s to pass", field)
 	}
 
-	for _, measurement := range drops {
-		if f.shouldFieldPass(measurement) {
-			t.Errorf("Expected measurement %s to drop", measurement)
-		}
+	for _, field := range drops {
+		require.Falsef(t, ShouldPassFilters(f.fieldIncludeFilter, f.fieldExcludeFilter, field), "Expected field %s to drop", field)
 	}
 }
 
-func TestFilter_TagPass(t *testing.T) {
+func TestFilterTagPass(t *testing.T) {
 	filters := []TagFilter{
 		{
 			Name:   "cpu",
@@ -292,7 +356,7 @@ func TestFilter_TagPass(t *testing.T) {
 	}
 }
 
-func TestFilter_TagDrop(t *testing.T) {
+func TestFilterTagDrop(t *testing.T) {
 	filters := []TagFilter{
 		{
 			Name:   "cpu",
@@ -336,7 +400,7 @@ func TestFilter_TagDrop(t *testing.T) {
 	}
 }
 
-func TestFilter_FilterTagsNoMatches(t *testing.T) {
+func TestFilterTagsNoMatches(t *testing.T) {
 	m := metric.New("m",
 		map[string]string{
 			"host":  "localhost",
@@ -364,7 +428,7 @@ func TestFilter_FilterTagsNoMatches(t *testing.T) {
 	require.Equal(t, map[string]string{}, m.Tags())
 }
 
-func TestFilter_FilterTagsMatches(t *testing.T) {
+func TestFilterTagsMatches(t *testing.T) {
 	m := metric.New("m",
 		map[string]string{
 			"host":  "localhost",
@@ -403,7 +467,7 @@ func TestFilter_FilterTagsMatches(t *testing.T) {
 // TestFilter_FilterNamePassAndDrop used for check case when
 // both parameters were defined
 // see: https://github.com/influxdata/telegraf/issues/2860
-func TestFilter_FilterNamePassAndDrop(t *testing.T) {
+func TestFilterNamePassAndDrop(t *testing.T) {
 	inputData := []string{"name1", "name2", "name3", "name4"}
 	expectedResult := []bool{false, true, false, false}
 
@@ -419,29 +483,29 @@ func TestFilter_FilterNamePassAndDrop(t *testing.T) {
 	}
 }
 
-// TestFilter_FilterFieldPassAndDrop used for check case when
+// TestFilter_FieldIncludeAndExclude used for check case when
 // both parameters were defined
 // see: https://github.com/influxdata/telegraf/issues/2860
-func TestFilter_FilterFieldPassAndDrop(t *testing.T) {
+func TestFilterFieldIncludeAndExclude(t *testing.T) {
 	inputData := []string{"field1", "field2", "field3", "field4"}
 	expectedResult := []bool{false, true, false, false}
 
 	f := Filter{
-		FieldPass: []string{"field1", "field2"},
-		FieldDrop: []string{"field1", "field3"},
+		FieldInclude: []string{"field1", "field2"},
+		FieldExclude: []string{"field1", "field3"},
 	}
 
 	require.NoError(t, f.Compile())
 
 	for i, field := range inputData {
-		require.Equal(t, f.shouldFieldPass(field), expectedResult[i])
+		require.Equal(t, ShouldPassFilters(f.fieldIncludeFilter, f.fieldExcludeFilter, field), expectedResult[i])
 	}
 }
 
 // TestFilter_FilterTagsPassAndDrop used for check case when
 // both parameters were defined
 // see: https://github.com/influxdata/telegraf/issues/2860
-func TestFilter_FilterTagsPassAndDrop(t *testing.T) {
+func TestFilterTagsPassAndDrop(t *testing.T) {
 	inputData := [][]*telegraf.Tag{
 		{{Key: "tag1", Value: "1"}, {Key: "tag2", Value: "3"}},
 		{{Key: "tag1", Value: "1"}, {Key: "tag2", Value: "2"}},
@@ -480,7 +544,7 @@ func TestFilter_FilterTagsPassAndDrop(t *testing.T) {
 	}
 }
 
-func TestFilter_MetricPass(t *testing.T) {
+func TestFilterMetricPass(t *testing.T) {
 	m := testutil.MustMetric("cpu",
 		map[string]string{
 			"host":   "Hugin",
@@ -543,12 +607,7 @@ func TestFilter_MetricPass(t *testing.T) {
 			expected:   true,
 		},
 		{
-			name:       "arithmetics",
-			expression: `fields.count + fields.errors < fields.total`,
-			expected:   true,
-		},
-		{
-			name:       "arithmetics",
+			name:       "arithmetic",
 			expression: `fields.count + fields.errors < fields.total`,
 			expected:   true,
 		},
@@ -558,7 +617,7 @@ func TestFilter_MetricPass(t *testing.T) {
 			expected:   true,
 		},
 		{
-			name:       "time arithmetics",
+			name:       "time arithmetic",
 			expression: `time >= timestamp("2023-04-25T00:00:00Z") - duration("24h")`,
 			expected:   true,
 		},
@@ -660,8 +719,8 @@ func BenchmarkFilter(b *testing.B) {
 			name: "metric filter complex",
 			filter: Filter{
 				MetricPass: `"source" in tags` +
-					` and fields.exists(f, type(fields[f]) in [int, uint, double] and fields[f] > 20.0)` +
-					` and time >= timestamp("2023-04-25T00:00:00Z") - duration("24h")`,
+					` && fields.exists(f, type(fields[f]) in [int, uint, double] && fields[f] > 20.0)` +
+					` && time >= timestamp("2023-04-25T00:00:00Z") - duration("24h")`,
 			},
 			metric: testutil.MustMetric("cpu",
 				map[string]string{},

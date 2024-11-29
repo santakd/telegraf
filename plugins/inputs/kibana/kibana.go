@@ -2,6 +2,7 @@
 package kibana
 
 import (
+	"context"
 	_ "embed"
 	"encoding/json"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/plugins/common/tls"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -22,6 +23,17 @@ import (
 var sampleConfig string
 
 const statusPath = "/api/status"
+
+type Kibana struct {
+	Servers  []string `toml:"servers"`
+	Username string   `toml:"username"`
+	Password string   `toml:"password"`
+
+	Log telegraf.Logger `toml:"-"`
+
+	client *http.Client
+	common_http.HTTPClientConfig
+}
 
 type kibanaStatus struct {
 	Name    string  `json:"name"`
@@ -85,38 +97,12 @@ type heap struct {
 	SizeLimit    int64 `json:"size_limit"`
 }
 
-type Kibana struct {
-	Local    bool
-	Servers  []string
-	Username string
-	Password string
-	Timeout  config.Duration
-	tls.ClientConfig
-
-	client *http.Client
-}
-
-func NewKibana() *Kibana {
-	return &Kibana{
-		Timeout: config.Duration(time.Second * 5),
-	}
-}
-
-// perform status mapping
-func mapHealthStatusToCode(s string) int {
-	switch strings.ToLower(s) {
-	case "green":
-		return 1
-	case "yellow":
-		return 2
-	case "red":
-		return 3
-	}
-	return 0
-}
-
 func (*Kibana) SampleConfig() string {
 	return sampleConfig
+}
+
+func (k *Kibana) Start(_ telegraf.Accumulator) error {
+	return nil
 }
 
 func (k *Kibana) Gather(acc telegraf.Accumulator) error {
@@ -146,20 +132,15 @@ func (k *Kibana) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
+func (k *Kibana) Stop() {
+	if k.client != nil {
+		k.client.CloseIdleConnections()
+	}
+}
+
 func (k *Kibana) createHTTPClient() (*http.Client, error) {
-	tlsCfg, err := k.ClientConfig.TLSConfig()
-	if err != nil {
-		return nil, err
-	}
-
-	client := &http.Client{
-		Transport: &http.Transport{
-			TLSClientConfig: tlsCfg,
-		},
-		Timeout: time.Duration(k.Timeout),
-	}
-
-	return client, nil
+	ctx := context.Background()
+	return k.HTTPClientConfig.CreateClient(ctx, k.Log)
 }
 
 func (k *Kibana) gatherKibanaStatus(baseURL string, acc telegraf.Accumulator) error {
@@ -233,7 +214,7 @@ func (k *Kibana) gatherJSONData(url string, v interface{}) (host string, err err
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		// ignore the err here; LimitReader returns io.EOF and we're not interested in read errors.
+		//nolint:errcheck // LimitReader returns io.EOF and we're not interested in read errors.
 		body, _ := io.ReadAll(io.LimitReader(response.Body, 200))
 		return request.Host, fmt.Errorf("%s returned HTTP status %s: %q", url, response.Status, body)
 	}
@@ -245,8 +226,29 @@ func (k *Kibana) gatherJSONData(url string, v interface{}) (host string, err err
 	return request.Host, nil
 }
 
+// perform status mapping
+func mapHealthStatusToCode(s string) int {
+	switch strings.ToLower(s) {
+	case "green":
+		return 1
+	case "yellow":
+		return 2
+	case "red":
+		return 3
+	}
+	return 0
+}
+
+func newKibana() *Kibana {
+	return &Kibana{
+		HTTPClientConfig: common_http.HTTPClientConfig{
+			Timeout: config.Duration(5 * time.Second),
+		},
+	}
+}
+
 func init() {
 	inputs.Add("kibana", func() telegraf.Input {
-		return NewKibana()
+		return newKibana()
 	})
 }

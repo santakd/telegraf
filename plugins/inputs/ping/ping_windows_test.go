@@ -4,7 +4,6 @@ package ping
 
 import (
 	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -61,7 +60,7 @@ func TestHost(t *testing.T) {
 	require.Equal(t, 52, stats.max, "Max 52")
 }
 
-func mockHostPinger(_ string, _ float64, _ ...string) (string, error) {
+func mockHostPinger(string, float64, ...string) (string, error) {
 	return winENPingOutput, nil
 }
 
@@ -104,8 +103,8 @@ Statystyka badania ping dla 195.187.242.157:
              (100% straty),
 `
 
-func mockErrorHostPinger(_ string, _ float64, _ ...string) (string, error) {
-	return errorPingOutput, errors.New("No packets received")
+func mockErrorHostPinger(string, float64, ...string) (string, error) {
+	return errorPingOutput, errors.New("no packets received")
 }
 
 // Test that Gather works on a ping with no transmitted packets, even though the
@@ -143,7 +142,7 @@ func TestArguments(t *testing.T) {
 	}
 
 	actual := p.args("www.google.com")
-	require.True(t, reflect.DeepEqual(actual, arguments), "Expected : %s Actual: %s", arguments, actual)
+	require.Equal(t, actual, arguments)
 }
 
 var lossyPingOutput = `
@@ -165,7 +164,7 @@ Szacunkowy czas błądzenia pakietów w millisekundach:
     Minimum = 114 ms, Maksimum = 119 ms, Czas średni = 115 ms
 `
 
-func mockLossyHostPinger(_ string, _ float64, _ ...string) (string, error) {
+func mockLossyHostPinger(string, float64, ...string) (string, error) {
 	return lossyPingOutput, nil
 }
 
@@ -228,8 +227,8 @@ Options:
 
 `
 
-func mockFatalHostPinger(_ string, _ float64, _ ...string) (string, error) {
-	return fatalPingOutput, errors.New("So very bad")
+func mockFatalHostPinger(string, float64, ...string) (string, error) {
+	return fatalPingOutput, errors.New("so very bad")
 }
 
 // Test that a fatal ping command does not gather any statistics.
@@ -273,11 +272,11 @@ Ping statistics for 8.8.8.8:
     Packets: Sent = 4, Received = 1, Lost = 3 (75% loss),
 `
 
-func mockUnreachableHostPinger(_ string, _ float64, _ ...string) (string, error) {
-	return UnreachablePingOutput, errors.New("So very bad")
+func mockUnreachableHostPinger(string, float64, ...string) (string, error) {
+	return UnreachablePingOutput, errors.New("so very bad")
 }
 
-//Reply from 185.28.251.217: TTL expired in transit.
+// Reply from 185.28.251.217: TTL expired in transit.
 
 // in case 'Destination net unreachable' ping app return receive packet which is not what we need
 // it's not contain valid metric so treat it as lost one
@@ -324,8 +323,8 @@ Ping statistics for 8.8.8.8:
     Packets: Sent = 4, Received = 1, Lost = 3 (75% loss),
 `
 
-func mockTTLExpiredPinger(_ string, _ float64, _ ...string) (string, error) {
-	return TTLExpiredPingOutput, errors.New("So very bad")
+func mockTTLExpiredPinger(string, float64, ...string) (string, error) {
+	return TTLExpiredPingOutput, errors.New("so very bad")
 }
 
 // in case 'Destination net unreachable' ping app return receive packet which is not what we need
@@ -368,8 +367,8 @@ func TestPingBinary(t *testing.T) {
 		Log:    testutil.Logger{},
 		Urls:   []string{"www.google.com"},
 		Binary: "ping6",
-		pingHost: func(binary string, timeout float64, args ...string) (string, error) {
-			require.True(t, binary == "ping6")
+		pingHost: func(binary string, _ float64, _ ...string) (string, error) {
+			require.Equal(t, "ping6", binary)
 			return "", nil
 		},
 	}

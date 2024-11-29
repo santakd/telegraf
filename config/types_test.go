@@ -27,10 +27,10 @@ func TestConfigDuration(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, c.Processors, 1)
 	p := c.Processors[0].Processor.(*reverse_dns.ReverseDNS)
-	require.EqualValues(t, p.CacheTTL, 3*time.Hour)
-	require.EqualValues(t, p.LookupTimeout, 17*time.Second)
-	require.Equal(t, p.MaxParallelLookups, 13)
-	require.Equal(t, p.Ordered, true)
+	require.EqualValues(t, 3*time.Hour, p.CacheTTL)
+	require.EqualValues(t, 17*time.Second, p.LookupTimeout)
+	require.Equal(t, 13, p.MaxParallelLookups)
+	require.True(t, p.Ordered)
 }
 
 func TestDuration(t *testing.T) {
@@ -261,7 +261,7 @@ func TestTOMLParsingIntegerSizes(t *testing.T) {
 	}
 }
 
-/*** Mockup (input) plugin for testing to avoid cyclic dependencies ***/
+// Mockup (input) plugin for testing to avoid cyclic dependencies
 type MockupTypesPlugin struct {
 	Durations []config.Duration `toml:"durations"`
 	Sizes     []config.Size     `toml:"sizes"`

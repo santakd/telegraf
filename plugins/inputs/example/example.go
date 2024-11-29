@@ -4,6 +4,7 @@ package example
 import (
 	"crypto/rand"
 	_ "embed"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -51,11 +52,11 @@ func (*Example) SampleConfig() string {
 func (m *Example) Init() error {
 	// Check your options according to your requirements
 	if m.DeviceName == "" {
-		return fmt.Errorf("device name cannot be empty")
+		return errors.New("device name cannot be empty")
 	}
 
 	// Set your defaults.
-	// Please note: In golang all fields are initialzed to their nil value, so you should not
+	// Please note: In golang all fields are initialized to their nil value, so you should not
 	// set these fields if the nil value is what you want (e.g. for booleans).
 	if m.NumberFields < 1 {
 		m.Log.Debugf("Setting number of fields to default from invalid value %d", m.NumberFields)
@@ -73,9 +74,9 @@ func (m *Example) Init() error {
 	if err != nil {
 		return fmt.Errorf("getting password failed: %w", err)
 	}
-	defer config.ReleaseSecret(password)
+	defer password.Destroy()
 
-	// Initialze your internal states
+	// Initialize your internal states
 	m.count = 1
 
 	return nil
@@ -85,7 +86,7 @@ func (m *Example) Init() error {
 func (m *Example) Gather(acc telegraf.Accumulator) error {
 	// Imagine some completely arbitrary error occurring here
 	if m.NumberFields > 10 {
-		return fmt.Errorf("too many fields")
+		return errors.New("too many fields")
 	}
 
 	// For illustration, we gather three metrics in one go
@@ -95,7 +96,7 @@ func (m *Example) Gather(acc telegraf.Accumulator) error {
 		// all later metrics. Simply accumulate errors in this case
 		// and ignore the metric.
 		if m.EnableRandomVariable && m.DeviceName == "flappy" && run > 1 {
-			acc.AddError(fmt.Errorf("too many runs for random values"))
+			acc.AddError(errors.New("too many runs for random values"))
 			continue
 		}
 

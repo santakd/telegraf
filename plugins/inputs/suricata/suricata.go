@@ -187,7 +187,7 @@ func (s *Suricata) parseAlert(acc telegraf.Accumulator, result map[string]interf
 
 	totalmap := make(map[string]interface{})
 	for k, v := range result["alert"].(map[string]interface{}) {
-		//source and target fields are maps
+		// source and target fields are maps
 		err := flexFlatten(totalmap, k, v, s.Delimiter)
 		if err != nil {
 			s.Log.Debugf("Flattening alert failed: %v", err)
@@ -196,7 +196,7 @@ func (s *Suricata) parseAlert(acc telegraf.Accumulator, result map[string]interf
 		}
 	}
 
-	//threads field do not exist in alert output, always global
+	// threads field do not exist in alert output, always global
 	acc.AddFields("suricata_alert", totalmap, nil)
 }
 
@@ -305,7 +305,7 @@ func (s *Suricata) parseGeneric(acc telegraf.Accumulator, result map[string]inte
 	}
 	for _, key := range []string{"src_port", "dest_port"} {
 		if val, ok := result[key]; ok {
-			if convertedVal, err := internal.ToInt64(val); err == nil {
+			if convertedVal, err := internal.ToInt64(val); err == nil || errors.Is(err, internal.ErrOutOfRange) {
 				fields[key] = convertedVal
 			}
 		}
@@ -336,7 +336,7 @@ func (s *Suricata) parse(acc telegraf.Accumulator, sjson []byte) error {
 		}
 	} else {
 		s.Log.Debugf("Invalid input without 'stats' or 'alert' object: %v", result)
-		return fmt.Errorf("input does not contain 'stats' or 'alert' object")
+		return errors.New("input does not contain 'stats' or 'alert' object")
 	}
 
 	return nil

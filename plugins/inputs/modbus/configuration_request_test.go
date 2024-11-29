@@ -7,10 +7,11 @@ import (
 	"time"
 
 	mb "github.com/grid-x/modbus"
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tbrandon/mbserver"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func TestRequest(t *testing.T) {
@@ -457,6 +458,8 @@ func TestRequestTypesHoldingABCD(t *testing.T) {
 	tests := []struct {
 		name        string
 		address     uint16
+		bit         uint8
+		length      uint16
 		byteOrder   string
 		dataTypeIn  string
 		dataTypeOut string
@@ -464,6 +467,22 @@ func TestRequestTypesHoldingABCD(t *testing.T) {
 		write       []byte
 		read        interface{}
 	}{
+		{
+			name:       "register5_bit3",
+			address:    5,
+			dataTypeIn: "BIT",
+			bit:        3,
+			write:      []byte{0x18, 0x0d},
+			read:       uint8(1),
+		},
+		{
+			name:       "register5_bit14",
+			address:    5,
+			dataTypeIn: "BIT",
+			bit:        14,
+			write:      []byte{0x18, 0x0d},
+			read:       uint8(0),
+		},
 		{
 			name:       "register10_uint8L",
 			address:    10,
@@ -988,6 +1007,14 @@ func TestRequestTypesHoldingABCD(t *testing.T) {
 			scale:      1.0,
 			write:      []byte{0xb8, 0x14},
 			read:       float64(-0.509765625),
+		},
+		{
+			name:       "register110_string",
+			address:    110,
+			dataTypeIn: "STRING",
+			length:     7,
+			write:      []byte{0x4d, 0x6f, 0x64, 0x62, 0x75, 0x73, 0x20, 0x53, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x00},
+			read:       "Modbus String",
 		},
 	}
 
@@ -1024,6 +1051,8 @@ func TestRequestTypesHoldingABCD(t *testing.T) {
 							OutputType: hrt.dataTypeOut,
 							Scale:      hrt.scale,
 							Address:    hrt.address,
+							Length:     hrt.length,
+							Bit:        hrt.bit,
 						},
 					},
 				},
@@ -1058,6 +1087,7 @@ func TestRequestTypesHoldingDCBA(t *testing.T) {
 	tests := []struct {
 		name        string
 		address     uint16
+		length      uint16
 		byteOrder   string
 		dataTypeIn  string
 		dataTypeOut string
@@ -1590,6 +1620,14 @@ func TestRequestTypesHoldingDCBA(t *testing.T) {
 			write:      []byte{0xb8, 0x14},
 			read:       float64(-0.509765625),
 		},
+		{
+			name:       "register110_string",
+			address:    110,
+			dataTypeIn: "STRING",
+			length:     7,
+			write:      []byte{0x6f, 0x4d, 0x62, 0x64, 0x73, 0x75, 0x53, 0x20, 0x72, 0x74, 0x6e, 0x69, 0x00, 0x67},
+			read:       "Modbus String",
+		},
 	}
 
 	serv := mbserver.NewServer()
@@ -1605,8 +1643,13 @@ func TestRequestTypesHoldingDCBA(t *testing.T) {
 		t.Run(hrt.name, func(t *testing.T) {
 			quantity := uint16(len(hrt.write) / 2)
 			invert := make([]byte, 0, len(hrt.write))
-			for i := len(hrt.write) - 1; i >= 0; i-- {
-				invert = append(invert, hrt.write[i])
+			if hrt.dataTypeIn != "STRING" {
+				for i := len(hrt.write) - 1; i >= 0; i-- {
+					invert = append(invert, hrt.write[i])
+				}
+			} else {
+				// Put in raw data for strings
+				invert = append(invert, hrt.write...)
 			}
 			_, err := client.WriteMultipleRegisters(hrt.address, quantity, invert)
 			require.NoError(t, err)
@@ -1629,6 +1672,7 @@ func TestRequestTypesHoldingDCBA(t *testing.T) {
 							OutputType: hrt.dataTypeOut,
 							Scale:      hrt.scale,
 							Address:    hrt.address,
+							Length:     hrt.length,
 						},
 					},
 				},
@@ -1678,7 +1722,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: empty field name in request for slave 1",
+			errormsg: "empty field name in request for slave 1",
 		},
 		{
 			name: "invalid byte-order (coil)",
@@ -1687,10 +1731,9 @@ func TestRequestFail(t *testing.T) {
 					SlaveID:      1,
 					ByteOrder:    "AB",
 					RegisterType: "coil",
-					Fields:       []requestFieldDefinition{},
 				},
 			},
-			errormsg: "configuration invalid: unknown byte-order \"AB\"",
+			errormsg: "unknown byte-order \"AB\"",
 		},
 		{
 			name: "duplicate fields (coil)",
@@ -1711,7 +1754,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"coil-0\" duplicated in measurement \"modbus\" (slave 1/\"coil\")",
+			errormsg: "field \"coil-0\" duplicated in measurement \"modbus\" (slave 1/\"coil\")",
 		},
 		{
 			name: "duplicate fields multiple requests (coil)",
@@ -1741,7 +1784,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"coil-0\" duplicated in measurement \"foo\" (slave 1/\"coil\")",
+			errormsg: "field \"coil-0\" duplicated in measurement \"foo\" (slave 1/\"coil\")",
 		},
 		{
 			name: "invalid byte-order (discrete)",
@@ -1750,10 +1793,9 @@ func TestRequestFail(t *testing.T) {
 					SlaveID:      1,
 					ByteOrder:    "AB",
 					RegisterType: "discrete",
-					Fields:       []requestFieldDefinition{},
 				},
 			},
-			errormsg: "configuration invalid: unknown byte-order \"AB\"",
+			errormsg: "unknown byte-order \"AB\"",
 		},
 		{
 			name: "duplicate fields (discrete)",
@@ -1774,7 +1816,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"discrete-0\" duplicated in measurement \"modbus\" (slave 1/\"discrete\")",
+			errormsg: "field \"discrete-0\" duplicated in measurement \"modbus\" (slave 1/\"discrete\")",
 		},
 		{
 			name: "duplicate fields multiple requests (discrete)",
@@ -1804,7 +1846,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"discrete-0\" duplicated in measurement \"foo\" (slave 1/\"discrete\")",
+			errormsg: "field \"discrete-0\" duplicated in measurement \"foo\" (slave 1/\"discrete\")",
 		},
 		{
 			name: "invalid byte-order (holding)",
@@ -1813,10 +1855,9 @@ func TestRequestFail(t *testing.T) {
 					SlaveID:      1,
 					ByteOrder:    "AB",
 					RegisterType: "holding",
-					Fields:       []requestFieldDefinition{},
 				},
 			},
-			errormsg: "configuration invalid: unknown byte-order \"AB\"",
+			errormsg: "unknown byte-order \"AB\"",
 		},
 		{
 			name: "invalid field name (holding)",
@@ -1831,7 +1872,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: empty field name in request for slave 1",
+			errormsg: "empty field name in request for slave 1",
 		},
 		{
 			name: "invalid field input type (holding)",
@@ -1847,7 +1888,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "cannot process configuration: initializing field \"holding-0\" failed: invalid input datatype \"\" for determining field length",
+			errormsg: "initializing field \"holding-0\" failed: invalid input datatype \"\" for determining field length",
 		},
 		{
 			name: "invalid field output type (holding)",
@@ -1865,7 +1906,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: `configuration invalid: unknown output data-type "UINT8" for field "holding-0"`,
+			errormsg: `unknown output data-type "UINT8" for field "holding-0"`,
 		},
 		{
 			name: "duplicate fields (holding)",
@@ -1886,7 +1927,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"holding-0\" duplicated in measurement \"modbus\" (slave 1/\"holding\")",
+			errormsg: "field \"holding-0\" duplicated in measurement \"modbus\" (slave 1/\"holding\")",
 		},
 		{
 			name: "duplicate fields multiple requests (holding)",
@@ -1916,7 +1957,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"holding-0\" duplicated in measurement \"foo\" (slave 1/\"holding\")",
+			errormsg: "field \"holding-0\" duplicated in measurement \"foo\" (slave 1/\"holding\")",
 		},
 		{
 			name: "invalid byte-order (input)",
@@ -1925,10 +1966,9 @@ func TestRequestFail(t *testing.T) {
 					SlaveID:      1,
 					ByteOrder:    "AB",
 					RegisterType: "input",
-					Fields:       []requestFieldDefinition{},
 				},
 			},
-			errormsg: "configuration invalid: unknown byte-order \"AB\"",
+			errormsg: "unknown byte-order \"AB\"",
 		},
 		{
 			name: "invalid field name (input)",
@@ -1943,7 +1983,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: empty field name in request for slave 1",
+			errormsg: "empty field name in request for slave 1",
 		},
 		{
 			name: "invalid field input type (input)",
@@ -1959,7 +1999,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "cannot process configuration: initializing field \"input-0\" failed: invalid input datatype \"\" for determining field length",
+			errormsg: "initializing field \"input-0\" failed: invalid input datatype \"\" for determining field length",
 		},
 		{
 			name: "invalid field output type (input)",
@@ -1977,7 +2017,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: `configuration invalid: unknown output data-type "UINT8" for field "input-0"`,
+			errormsg: `unknown output data-type "UINT8" for field "input-0"`,
 		},
 		{
 			name: "duplicate fields (input)",
@@ -1998,7 +2038,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"input-0\" duplicated in measurement \"modbus\" (slave 1/\"input\")",
+			errormsg: "field \"input-0\" duplicated in measurement \"modbus\" (slave 1/\"input\")",
 		},
 		{
 			name: "duplicate fields multiple requests (input)",
@@ -2028,7 +2068,7 @@ func TestRequestFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: field \"input-0\" duplicated in measurement \"foo\" (slave 1/\"input\")",
+			errormsg: "field \"input-0\" duplicated in measurement \"foo\" (slave 1/\"input\")",
 		},
 	}
 
@@ -2042,9 +2082,7 @@ func TestRequestFail(t *testing.T) {
 			}
 			plugin.Requests = tt.requests
 
-			err := plugin.Init()
-			require.Error(t, err)
-			require.Equal(t, tt.errormsg, err.Error())
+			require.ErrorContains(t, plugin.Init(), tt.errormsg)
 			require.Empty(t, plugin.requests)
 		})
 	}
@@ -2218,11 +2256,10 @@ func TestRequestEmptyFields(t *testing.T) {
 		},
 	}
 	err := modbus.Init()
-	require.EqualError(t, err, `configuration invalid: found request section without fields`)
+	require.ErrorContains(t, err, `found request section without fields`)
 }
 
 func TestRequestMultipleSlavesOneFail(t *testing.T) {
-	telegraf.Debug = true
 	modbus := Modbus{
 		Name:              "Test",
 		Controller:        "tcp://localhost:1502",
@@ -2275,7 +2312,7 @@ func TestRequestMultipleSlavesOneFail(t *testing.T) {
 	defer serv.Close()
 
 	serv.RegisterFunctionHandler(3,
-		func(s *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
+		func(_ *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
 			tcpframe, ok := frame.(*mbserver.TCPFrame)
 			if !ok {
 				return nil, &mbserver.IllegalFunction
@@ -2283,7 +2320,7 @@ func TestRequestMultipleSlavesOneFail(t *testing.T) {
 
 			if tcpframe.Device == 2 {
 				// Simulate device 2 being unavailable
-				return []byte{}, &mbserver.GatewayTargetDeviceFailedtoRespond
+				return nil, &mbserver.GatewayTargetDeviceFailedtoRespond
 			}
 			return []byte{0x02, 0x00, 0x42}, &mbserver.Success
 		},
@@ -2318,7 +2355,7 @@ func TestRequestMultipleSlavesOneFail(t *testing.T) {
 	actual := acc.GetTelegrafMetrics()
 	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime(), testutil.SortMetrics())
 	require.Len(t, acc.Errors, 1)
-	require.EqualError(t, acc.FirstError(), "slave 2: modbus: exception '11' (gateway target device failed to respond), function '131'")
+	require.ErrorContains(t, acc.FirstError(), `slave 2 on controller "tcp://localhost:1502": modbus: exception '11' (gateway target device failed to respond)`)
 }
 
 func TestRequestOptimizationShrink(t *testing.T) {
@@ -2963,7 +3000,7 @@ func TestRequestOptimizationMaxExtraRegisterFail(t *testing.T) {
 				},
 			},
 		},
-		errormsg: "configuration invalid: optimization_max_register_fill has to be between 1 and 125",
+		errormsg: "optimization_max_register_fill has to be between 1 and 125",
 	},
 		{
 			name: "MaxExtraRegister too small",
@@ -2983,7 +3020,7 @@ func TestRequestOptimizationMaxExtraRegisterFail(t *testing.T) {
 					},
 				},
 			},
-			errormsg: "configuration invalid: optimization_max_register_fill has to be between 1 and 125",
+			errormsg: "optimization_max_register_fill has to be between 1 and 125",
 		}}
 
 	for _, tt := range tests {
@@ -2996,9 +3033,7 @@ func TestRequestOptimizationMaxExtraRegisterFail(t *testing.T) {
 			}
 			plugin.Requests = tt.requests
 
-			err := plugin.Init()
-			require.Error(t, err)
-			require.Equal(t, tt.errormsg, err.Error())
+			require.ErrorContains(t, plugin.Init(), tt.errormsg)
 			require.Empty(t, plugin.requests)
 		})
 	}
@@ -3142,7 +3177,7 @@ func TestRequestWorkaroundsOneRequestPerField(t *testing.T) {
 		Controller:        "tcp://localhost:1502",
 		ConfigurationType: "request",
 		Log:               testutil.Logger{},
-		Workarounds:       ModbusWorkarounds{OnRequestPerField: true},
+		Workarounds:       workarounds{OnRequestPerField: true},
 	}
 	plugin.Requests = []requestDefinition{
 		{
@@ -3188,7 +3223,7 @@ func TestRequestWorkaroundsReadCoilsStartingAtZeroRequest(t *testing.T) {
 		Controller:        "tcp://localhost:1502",
 		ConfigurationType: "request",
 		Log:               testutil.Logger{},
-		Workarounds:       ModbusWorkarounds{ReadCoilsStartingAtZero: true},
+		Workarounds:       workarounds{ReadCoilsStartingAtZero: true},
 	}
 	plugin.SlaveID = 1
 	plugin.Requests = []requestDefinition{
@@ -3227,7 +3262,7 @@ func TestRequestOverlap(t *testing.T) {
 		Controller:        "tcp://localhost:1502",
 		ConfigurationType: "request",
 		Log:               logger,
-		Workarounds:       ModbusWorkarounds{ReadCoilsStartingAtZero: true},
+		Workarounds:       workarounds{ReadCoilsStartingAtZero: true},
 	}
 	plugin.Requests = []requestDefinition{
 		{
@@ -3276,4 +3311,29 @@ func TestRequestOverlap(t *testing.T) {
 
 	require.Len(t, plugin.requests, 1)
 	require.Len(t, plugin.requests[1].holding, 1)
+}
+
+func TestRequestAddressOverflow(t *testing.T) {
+	logger := &testutil.CaptureLogger{}
+	plugin := Modbus{
+		Name:              "Test",
+		Controller:        "tcp://localhost:1502",
+		ConfigurationType: "request",
+		Log:               logger,
+		Workarounds:       workarounds{ReadCoilsStartingAtZero: true},
+	}
+	plugin.Requests = []requestDefinition{
+		{
+			SlaveID:      1,
+			RegisterType: "holding",
+			Fields: []requestFieldDefinition{
+				{
+					Name:      "field",
+					InputType: "UINT64",
+					Address:   uint16(65534),
+				},
+			},
+		},
+	}
+	require.ErrorIs(t, plugin.Init(), errAddressOverflow)
 }

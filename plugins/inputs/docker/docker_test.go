@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/swarm"
+	"github.com/docker/docker/api/types/system"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
@@ -19,89 +21,86 @@ import (
 	"github.com/influxdata/telegraf/testutil"
 )
 
-type MockClient struct {
-	InfoF             func(ctx context.Context) (types.Info, error)
-	ContainerListF    func(ctx context.Context, options types.ContainerListOptions) ([]types.Container, error)
-	ContainerStatsF   func(ctx context.Context, containerID string, stream bool) (types.ContainerStats, error)
-	ContainerInspectF func(ctx context.Context, containerID string) (types.ContainerJSON, error)
-	ServiceListF      func(ctx context.Context, options types.ServiceListOptions) ([]swarm.Service, error)
-	TaskListF         func(ctx context.Context, options types.TaskListOptions) ([]swarm.Task, error)
-	NodeListF         func(ctx context.Context, options types.NodeListOptions) ([]swarm.Node, error)
+type mockClient struct {
+	InfoF             func() (system.Info, error)
+	ContainerListF    func(options container.ListOptions) ([]types.Container, error)
+	ContainerStatsF   func(containerID string) (container.StatsResponseReader, error)
+	ContainerInspectF func() (types.ContainerJSON, error)
+	ServiceListF      func() ([]swarm.Service, error)
+	TaskListF         func() ([]swarm.Task, error)
+	NodeListF         func() ([]swarm.Node, error)
+	DiskUsageF        func() (types.DiskUsage, error)
+	ClientVersionF    func() string
 	CloseF            func() error
 }
 
-func (c *MockClient) Info(ctx context.Context) (types.Info, error) {
-	return c.InfoF(ctx)
+func (c *mockClient) Info(context.Context) (system.Info, error) {
+	return c.InfoF()
 }
 
-func (c *MockClient) ContainerList(
-	ctx context.Context,
-	options types.ContainerListOptions,
-) ([]types.Container, error) {
-	return c.ContainerListF(ctx, options)
+func (c *mockClient) ContainerList(_ context.Context, options container.ListOptions) ([]types.Container, error) {
+	return c.ContainerListF(options)
 }
 
-func (c *MockClient) ContainerStats(
-	ctx context.Context,
-	containerID string,
-	stream bool,
-) (types.ContainerStats, error) {
-	return c.ContainerStatsF(ctx, containerID, stream)
+func (c *mockClient) ContainerStats(_ context.Context, containerID string, _ bool) (container.StatsResponseReader, error) {
+	return c.ContainerStatsF(containerID)
 }
 
-func (c *MockClient) ContainerInspect(
-	ctx context.Context,
-	containerID string,
-) (types.ContainerJSON, error) {
-	return c.ContainerInspectF(ctx, containerID)
+func (c *mockClient) ContainerInspect(context.Context, string) (types.ContainerJSON, error) {
+	return c.ContainerInspectF()
 }
 
-func (c *MockClient) ServiceList(
-	ctx context.Context,
-	options types.ServiceListOptions,
-) ([]swarm.Service, error) {
-	return c.ServiceListF(ctx, options)
+func (c *mockClient) ServiceList(context.Context, types.ServiceListOptions) ([]swarm.Service, error) {
+	return c.ServiceListF()
 }
 
-func (c *MockClient) TaskList(
-	ctx context.Context,
-	options types.TaskListOptions,
-) ([]swarm.Task, error) {
-	return c.TaskListF(ctx, options)
+func (c *mockClient) TaskList(context.Context, types.TaskListOptions) ([]swarm.Task, error) {
+	return c.TaskListF()
 }
 
-func (c *MockClient) NodeList(
-	ctx context.Context,
-	options types.NodeListOptions,
-) ([]swarm.Node, error) {
-	return c.NodeListF(ctx, options)
+func (c *mockClient) NodeList(context.Context, types.NodeListOptions) ([]swarm.Node, error) {
+	return c.NodeListF()
 }
 
-func (c *MockClient) Close() error {
+func (c *mockClient) DiskUsage(context.Context, types.DiskUsageOptions) (types.DiskUsage, error) {
+	return c.DiskUsageF()
+}
+
+func (c *mockClient) ClientVersion() string {
+	return c.ClientVersionF()
+}
+
+func (c *mockClient) Close() error {
 	return c.CloseF()
 }
 
-var baseClient = MockClient{
-	InfoF: func(context.Context) (types.Info, error) {
+var baseClient = mockClient{
+	InfoF: func() (system.Info, error) {
 		return info, nil
 	},
-	ContainerListF: func(context.Context, types.ContainerListOptions) ([]types.Container, error) {
+	ContainerListF: func(container.ListOptions) ([]types.Container, error) {
 		return containerList, nil
 	},
-	ContainerStatsF: func(c context.Context, s string, b bool) (types.ContainerStats, error) {
+	ContainerStatsF: func(s string) (container.StatsResponseReader, error) {
 		return containerStats(s), nil
 	},
-	ContainerInspectF: func(context.Context, string) (types.ContainerJSON, error) {
+	ContainerInspectF: func() (types.ContainerJSON, error) {
 		return containerInspect(), nil
 	},
-	ServiceListF: func(context.Context, types.ServiceListOptions) ([]swarm.Service, error) {
-		return ServiceList, nil
+	ServiceListF: func() ([]swarm.Service, error) {
+		return serviceList, nil
 	},
-	TaskListF: func(context.Context, types.TaskListOptions) ([]swarm.Task, error) {
-		return TaskList, nil
+	TaskListF: func() ([]swarm.Task, error) {
+		return taskList, nil
 	},
-	NodeListF: func(context.Context, types.NodeListOptions) ([]swarm.Node, error) {
-		return NodeList, nil
+	NodeListF: func() ([]swarm.Node, error) {
+		return nodeList, nil
+	},
+	DiskUsageF: func() (types.DiskUsage, error) {
+		return diskUsage, nil
+	},
+	ClientVersionF: func() string {
+		return version
 	},
 	CloseF: func() error {
 		return nil
@@ -422,28 +421,34 @@ func TestDocker_WindowsMemoryContainerStats(t *testing.T) {
 
 	d := Docker{
 		Log: testutil.Logger{},
-		newClient: func(string, *tls.Config) (Client, error) {
-			return &MockClient{
-				InfoF: func(ctx context.Context) (types.Info, error) {
+		newClient: func(string, *tls.Config) (dockerClient, error) {
+			return &mockClient{
+				InfoF: func() (system.Info, error) {
 					return info, nil
 				},
-				ContainerListF: func(ctx context.Context, options types.ContainerListOptions) ([]types.Container, error) {
+				ContainerListF: func(container.ListOptions) ([]types.Container, error) {
 					return containerList, nil
 				},
-				ContainerStatsF: func(ctx context.Context, containerID string, stream bool) (types.ContainerStats, error) {
+				ContainerStatsF: func(string) (container.StatsResponseReader, error) {
 					return containerStatsWindows(), nil
 				},
-				ContainerInspectF: func(ctx context.Context, containerID string) (types.ContainerJSON, error) {
+				ContainerInspectF: func() (types.ContainerJSON, error) {
 					return containerInspect(), nil
 				},
-				ServiceListF: func(context.Context, types.ServiceListOptions) ([]swarm.Service, error) {
-					return ServiceList, nil
+				ServiceListF: func() ([]swarm.Service, error) {
+					return serviceList, nil
 				},
-				TaskListF: func(context.Context, types.TaskListOptions) ([]swarm.Task, error) {
-					return TaskList, nil
+				TaskListF: func() ([]swarm.Task, error) {
+					return taskList, nil
 				},
-				NodeListF: func(context.Context, types.NodeListOptions) ([]swarm.Node, error) {
-					return NodeList, nil
+				NodeListF: func() ([]swarm.Node, error) {
+					return nodeList, nil
+				},
+				DiskUsageF: func() (types.DiskUsage, error) {
+					return diskUsage, nil
+				},
+				ClientVersionF: func() string {
+					return version
 				},
 				CloseF: func() error {
 					return nil
@@ -479,8 +484,6 @@ func TestContainerLabels(t *testing.T) {
 			container: genContainerLabeled(map[string]string{
 				"a": "x",
 			}),
-			include: []string{},
-			exclude: []string{},
 			expected: map[string]string{
 				"a": "x",
 			},
@@ -492,7 +495,6 @@ func TestContainerLabels(t *testing.T) {
 				"b": "y",
 			}),
 			include: []string{"a"},
-			exclude: []string{},
 			expected: map[string]string{
 				"a": "x",
 			},
@@ -503,7 +505,6 @@ func TestContainerLabels(t *testing.T) {
 				"a": "x",
 				"b": "y",
 			}),
-			include: []string{},
 			exclude: []string{"b"},
 			expected: map[string]string{
 				"a": "x",
@@ -517,7 +518,6 @@ func TestContainerLabels(t *testing.T) {
 				"bb": "z",
 			}),
 			include: []string{"a*"},
-			exclude: []string{},
 			expected: map[string]string{
 				"aa": "x",
 				"ab": "y",
@@ -530,7 +530,6 @@ func TestContainerLabels(t *testing.T) {
 				"ab": "y",
 				"bb": "z",
 			}),
-			include: []string{},
 			exclude: []string{"a*"},
 			expected: map[string]string{
 				"bb": "z",
@@ -554,9 +553,9 @@ func TestContainerLabels(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var acc testutil.Accumulator
 
-			newClientFunc := func(host string, tlsConfig *tls.Config) (Client, error) {
+			newClientFunc := func(string, *tls.Config) (dockerClient, error) {
 				client := baseClient
-				client.ContainerListF = func(context.Context, types.ContainerListOptions) ([]types.Container, error) {
+				client.ContainerListF = func(container.ListOptions) ([]types.Container, error) {
 					return []types.Container{tt.container}, nil
 				}
 				return &client, nil
@@ -611,51 +610,42 @@ func TestContainerNames(t *testing.T) {
 		},
 		{
 			name:     "Empty filters matches all",
-			include:  []string{},
-			exclude:  []string{},
 			expected: []string{"etcd", "etcd2", "acme", "acme-test", "foo"},
 		},
 		{
 			name:     "Match all containers",
 			include:  []string{"*"},
-			exclude:  []string{},
 			expected: []string{"etcd", "etcd2", "acme", "acme-test", "foo"},
 		},
 		{
 			name:     "Include prefix match",
 			include:  []string{"etc*"},
-			exclude:  []string{},
 			expected: []string{"etcd", "etcd2"},
 		},
 		{
 			name:     "Exact match",
 			include:  []string{"etcd"},
-			exclude:  []string{},
 			expected: []string{"etcd"},
 		},
 		{
 			name:     "Star matches zero length",
 			include:  []string{"etcd2*"},
-			exclude:  []string{},
 			expected: []string{"etcd2"},
 		},
 		{
 			name:     "Exclude matches all",
-			include:  []string{},
 			exclude:  []string{"etc*"},
 			expected: []string{"acme", "acme-test", "foo"},
 		},
 		{
 			name:     "Exclude single",
-			include:  []string{},
 			exclude:  []string{"etcd"},
 			expected: []string{"etcd2", "acme", "acme-test", "foo"},
 		},
 		{
-			name:     "Exclude all",
-			include:  []string{"*"},
-			exclude:  []string{"*"},
-			expected: []string{},
+			name:    "Exclude all",
+			include: []string{"*"},
+			exclude: []string{"*"},
 		},
 		{
 			name:     "Exclude item matching include",
@@ -674,12 +664,12 @@ func TestContainerNames(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var acc testutil.Accumulator
 
-			newClientFunc := func(host string, tlsConfig *tls.Config) (Client, error) {
+			newClientFunc := func(string, *tls.Config) (dockerClient, error) {
 				client := baseClient
-				client.ContainerListF = func(context.Context, types.ContainerListOptions) ([]types.Container, error) {
+				client.ContainerListF = func(container.ListOptions) ([]types.Container, error) {
 					return containerList, nil
 				}
-				client.ContainerStatsF = func(c context.Context, s string, b bool) (types.ContainerStats, error) {
+				client.ContainerStatsF = func(s string) (container.StatsResponseReader, error) {
 					return containerStats(s), nil
 				}
 
@@ -715,8 +705,8 @@ func TestContainerNames(t *testing.T) {
 	}
 }
 
-func FilterMetrics(metrics []telegraf.Metric, f func(telegraf.Metric) bool) []telegraf.Metric {
-	results := []telegraf.Metric{}
+func filterMetrics(metrics []telegraf.Metric, f func(telegraf.Metric) bool) []telegraf.Metric {
+	results := make([]telegraf.Metric, 0, len(metrics))
 	for _, m := range metrics {
 		if f(m) {
 			results = append(results, m)
@@ -884,12 +874,12 @@ func TestContainerStatus(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var (
 				acc           testutil.Accumulator
-				newClientFunc = func(string, *tls.Config) (Client, error) {
+				newClientFunc = func(string, *tls.Config) (dockerClient, error) {
 					client := baseClient
-					client.ContainerListF = func(context.Context, types.ContainerListOptions) ([]types.Container, error) {
+					client.ContainerListF = func(container.ListOptions) ([]types.Container, error) {
 						return containerList[:1], nil
 					}
-					client.ContainerInspectF = func(c context.Context, s string) (types.ContainerJSON, error) {
+					client.ContainerInspectF = func() (types.ContainerJSON, error) {
 						return tt.inspect, nil
 					}
 
@@ -913,7 +903,7 @@ func TestContainerStatus(t *testing.T) {
 			err := d.Gather(&acc)
 			require.NoError(t, err)
 
-			actual := FilterMetrics(acc.GetTelegrafMetrics(), func(m telegraf.Metric) bool {
+			actual := filterMetrics(acc.GetTelegrafMetrics(), func(m telegraf.Metric) bool {
 				return m.Name() == "docker_container_status"
 			})
 			testutil.RequireMetricsEqual(t, tt.expected, actual)
@@ -925,7 +915,7 @@ func TestDockerGatherInfo(t *testing.T) {
 	var acc testutil.Accumulator
 	d := Docker{
 		Log:       testutil.Logger{},
-		newClient: func(string, *tls.Config) (Client, error) { return &baseClient, nil },
+		newClient: func(string, *tls.Config) (dockerClient, error) { return &baseClient, nil },
 		TagEnvironment: []string{"ENVVAR1", "ENVVAR2", "ENVVAR3", "ENVVAR5",
 			"ENVVAR6", "ENVVAR7", "ENVVAR8", "ENVVAR9"},
 		PerDeviceInclude: []string{"cpu", "network", "blkio"},
@@ -1078,7 +1068,7 @@ func TestDockerGatherSwarmInfo(t *testing.T) {
 	var acc testutil.Accumulator
 	d := Docker{
 		Log:       testutil.Logger{},
-		newClient: func(string, *tls.Config) (Client, error) { return &baseClient, nil },
+		newClient: func(string, *tls.Config) (dockerClient, error) { return &baseClient, nil },
 	}
 
 	err := acc.GatherError(d.Gather)
@@ -1169,9 +1159,9 @@ func TestContainerStateFilter(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var acc testutil.Accumulator
 
-			newClientFunc := func(host string, tlsConfig *tls.Config) (Client, error) {
+			newClientFunc := func(string, *tls.Config) (dockerClient, error) {
 				client := baseClient
-				client.ContainerListF = func(ctx context.Context, options types.ContainerListOptions) ([]types.Container, error) {
+				client.ContainerListF = func(options container.ListOptions) ([]types.Container, error) {
 					for k, v := range tt.expected {
 						actual := options.Filters.Get(k)
 						sort.Strings(actual)
@@ -1200,22 +1190,22 @@ func TestContainerStateFilter(t *testing.T) {
 func TestContainerName(t *testing.T) {
 	tests := []struct {
 		name       string
-		clientFunc func(host string, tlsConfig *tls.Config) (Client, error)
+		clientFunc func(host string, tlsConfig *tls.Config) (dockerClient, error)
 		expected   string
 	}{
 		{
 			name: "container stats name is preferred",
-			clientFunc: func(host string, tlsConfig *tls.Config) (Client, error) {
+			clientFunc: func(string, *tls.Config) (dockerClient, error) {
 				client := baseClient
-				client.ContainerListF = func(context.Context, types.ContainerListOptions) ([]types.Container, error) {
+				client.ContainerListF = func(container.ListOptions) ([]types.Container, error) {
 					var containers []types.Container
 					containers = append(containers, types.Container{
 						Names: []string{"/logspout/foo"},
 					})
 					return containers, nil
 				}
-				client.ContainerStatsF = func(ctx context.Context, containerID string, stream bool) (types.ContainerStats, error) {
-					return types.ContainerStats{
+				client.ContainerStatsF = func(string) (container.StatsResponseReader, error) {
+					return container.StatsResponseReader{
 						Body: io.NopCloser(strings.NewReader(`{"name": "logspout"}`)),
 					}, nil
 				}
@@ -1225,17 +1215,17 @@ func TestContainerName(t *testing.T) {
 		},
 		{
 			name: "container stats without name uses container list name",
-			clientFunc: func(host string, tlsConfig *tls.Config) (Client, error) {
+			clientFunc: func(string, *tls.Config) (dockerClient, error) {
 				client := baseClient
-				client.ContainerListF = func(context.Context, types.ContainerListOptions) ([]types.Container, error) {
+				client.ContainerListF = func(container.ListOptions) ([]types.Container, error) {
 					var containers []types.Container
 					containers = append(containers, types.Container{
 						Names: []string{"/logspout"},
 					})
 					return containers, nil
 				}
-				client.ContainerStatsF = func(ctx context.Context, containerID string, stream bool) (types.ContainerStats, error) {
-					return types.ContainerStats{
+				client.ContainerStatsF = func(string) (container.StatsResponseReader, error) {
+					return container.StatsResponseReader{
 						Body: io.NopCloser(strings.NewReader(`{}`)),
 					}, nil
 				}
@@ -1299,7 +1289,7 @@ func TestHostnameFromID(t *testing.T) {
 
 func Test_parseContainerStatsPerDeviceAndTotal(t *testing.T) {
 	type args struct {
-		stat             *types.StatsJSON
+		stat             *container.StatsResponse
 		tags             map[string]string
 		id               string
 		perDeviceInclude []string
@@ -1401,7 +1391,6 @@ func Test_parseContainerStatsPerDeviceAndTotal(t *testing.T) {
 			args: args{
 				stat:             stats,
 				perDeviceInclude: containerMetricClasses,
-				totalInclude:     []string{},
 			},
 			expected: []telegraf.Metric{
 				metricCPU0, metricCPU1,
@@ -1412,20 +1401,16 @@ func Test_parseContainerStatsPerDeviceAndTotal(t *testing.T) {
 		{
 			name: "Total metrics enabled",
 			args: args{
-				stat:             stats,
-				perDeviceInclude: []string{},
-				totalInclude:     containerMetricClasses,
+				stat:         stats,
+				totalInclude: containerMetricClasses,
 			},
 			expected: []telegraf.Metric{metricCPUTotal, metricNetworkTotal, metricBlkioTotal},
 		},
 		{
 			name: "Per device and total metrics disabled",
 			args: args{
-				stat:             stats,
-				perDeviceInclude: []string{},
-				totalInclude:     []string{},
+				stat: stats,
 			},
-			expected: []telegraf.Metric{},
 		},
 	}
 
@@ -1439,7 +1424,7 @@ func Test_parseContainerStatsPerDeviceAndTotal(t *testing.T) {
 			}
 			d.parseContainerStats(tt.args.stat, &acc, tt.args.tags, tt.args.id, tt.args.daemonOSType)
 
-			actual := FilterMetrics(acc.GetTelegrafMetrics(), func(m telegraf.Metric) bool {
+			actual := filterMetrics(acc.GetTelegrafMetrics(), func(m telegraf.Metric) bool {
 				return choice.Contains(m.Name(),
 					[]string{"docker_container_cpu", "docker_container_net", "docker_container_blkio"})
 			})
@@ -1463,52 +1448,46 @@ func TestDocker_Init(t *testing.T) {
 		wantTotalInclude     []string
 	}{
 		{
-			"Unsupported perdevice_include setting",
-			fields{
+			name: "Unsupported perdevice_include setting",
+			fields: fields{
 				PerDevice:        false,
 				PerDeviceInclude: []string{"nonExistentClass"},
 				Total:            false,
 				TotalInclude:     []string{"cpu"},
 			},
-			true,
-			[]string{},
-			[]string{},
+			wantErr: true,
 		},
 		{
-			"Unsupported total_include setting",
-			fields{
+			name: "Unsupported total_include setting",
+			fields: fields{
 				PerDevice:        false,
 				PerDeviceInclude: []string{"cpu"},
 				Total:            false,
 				TotalInclude:     []string{"nonExistentClass"},
 			},
-			true,
-			[]string{},
-			[]string{},
+			wantErr: true,
 		},
 		{
-			"PerDevice true adds network and blkio",
-			fields{
+			name: "PerDevice true adds network and blkio",
+			fields: fields{
 				PerDevice:        true,
 				PerDeviceInclude: []string{"cpu"},
 				Total:            true,
 				TotalInclude:     []string{"cpu"},
 			},
-			false,
-			[]string{"cpu", "network", "blkio"},
-			[]string{"cpu"},
+			wantPerDeviceInclude: []string{"cpu", "network", "blkio"},
+			wantTotalInclude:     []string{"cpu"},
 		},
 		{
-			"Total false removes network and blkio",
-			fields{
+			name: "Total false removes network and blkio",
+			fields: fields{
 				PerDevice:        false,
 				PerDeviceInclude: []string{"cpu"},
 				Total:            false,
 				TotalInclude:     []string{"cpu", "network", "blkio"},
 			},
-			false,
-			[]string{"cpu"},
-			[]string{"cpu"},
+			wantPerDeviceInclude: []string{"cpu"},
+			wantTotalInclude:     []string{"cpu"},
 		},
 	}
 	for _, tt := range tests {
@@ -1536,4 +1515,81 @@ func TestDocker_Init(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestDockerGatherDiskUsage(t *testing.T) {
+	var acc testutil.Accumulator
+	d := Docker{
+		Log:       testutil.Logger{},
+		newClient: func(string, *tls.Config) (dockerClient, error) { return &baseClient, nil },
+	}
+
+	require.NoError(t, acc.GatherError(d.Gather))
+
+	d.gatherDiskUsage(&acc, types.DiskUsageOptions{})
+
+	acc.AssertContainsTaggedFields(t,
+		"docker_disk_usage",
+		map[string]interface{}{
+			"layers_size": int64(1e10),
+		},
+		map[string]string{
+			"engine_host":    "absol",
+			"server_version": "17.09.0-ce",
+		},
+	)
+
+	acc.AssertContainsTaggedFields(t,
+		"docker_disk_usage",
+		map[string]interface{}{
+			"size_root_fs": int64(123456789),
+			"size_rw":      int64(0)},
+		map[string]string{
+			"container_image":   "some_image",
+			"container_version": "1.0.0-alpine",
+			"engine_host":       "absol",
+			"server_version":    "17.09.0-ce",
+			"container_name":    "some_container",
+		},
+	)
+
+	acc.AssertContainsTaggedFields(t,
+		"docker_disk_usage",
+		map[string]interface{}{
+			"size":        int64(123456789),
+			"shared_size": int64(0)},
+		map[string]string{
+			"image_id":       "some_imageid",
+			"image_name":     "some_image_tag",
+			"image_version":  "1.0.0-alpine",
+			"engine_host":    "absol",
+			"server_version": "17.09.0-ce",
+		},
+	)
+
+	acc.AssertContainsTaggedFields(t,
+		"docker_disk_usage",
+		map[string]interface{}{
+			"size":        int64(425484494),
+			"shared_size": int64(0)},
+		map[string]string{
+			"image_id":       "7f4a1cc74046",
+			"image_name":     "telegraf",
+			"image_version":  "latest",
+			"engine_host":    "absol",
+			"server_version": "17.09.0-ce",
+		},
+	)
+
+	acc.AssertContainsTaggedFields(t,
+		"docker_disk_usage",
+		map[string]interface{}{
+			"size": int64(123456789),
+		},
+		map[string]string{
+			"volume_name":    "some_volume",
+			"engine_host":    "absol",
+			"server_version": "17.09.0-ce",
+		},
+	)
 }

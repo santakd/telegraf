@@ -6,6 +6,8 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net/http"
@@ -27,26 +29,29 @@ import (
 var sampleConfig string
 
 type Elasticsearch struct {
-	AuthBearerToken     config.Secret   `toml:"auth_bearer_token"`
-	DefaultPipeline     string          `toml:"default_pipeline"`
-	DefaultTagValue     string          `toml:"default_tag_value"`
-	EnableGzip          bool            `toml:"enable_gzip"`
-	EnableSniffer       bool            `toml:"enable_sniffer"`
-	FloatHandling       string          `toml:"float_handling"`
-	FloatReplacement    float64         `toml:"float_replacement_value"`
-	ForceDocumentID     bool            `toml:"force_document_id"`
-	HealthCheckInterval config.Duration `toml:"health_check_interval"`
-	HealthCheckTimeout  config.Duration `toml:"health_check_timeout"`
-	IndexName           string          `toml:"index_name"`
-	ManageTemplate      bool            `toml:"manage_template"`
-	OverwriteTemplate   bool            `toml:"overwrite_template"`
-	Username            config.Secret   `toml:"username"`
-	Password            config.Secret   `toml:"password"`
-	TemplateName        string          `toml:"template_name"`
-	Timeout             config.Duration `toml:"timeout"`
-	URLs                []string        `toml:"urls"`
-	UsePipeline         string          `toml:"use_pipeline"`
-	Log                 telegraf.Logger `toml:"-"`
+	AuthBearerToken     config.Secret          `toml:"auth_bearer_token"`
+	DefaultPipeline     string                 `toml:"default_pipeline"`
+	DefaultTagValue     string                 `toml:"default_tag_value"`
+	EnableGzip          bool                   `toml:"enable_gzip"`
+	EnableSniffer       bool                   `toml:"enable_sniffer"`
+	FloatHandling       string                 `toml:"float_handling"`
+	FloatReplacement    float64                `toml:"float_replacement_value"`
+	ForceDocumentID     bool                   `toml:"force_document_id"`
+	HealthCheckInterval config.Duration        `toml:"health_check_interval"`
+	HealthCheckTimeout  config.Duration        `toml:"health_check_timeout"`
+	IndexName           string                 `toml:"index_name"`
+	IndexTemplate       map[string]interface{} `toml:"template_index_settings"`
+	ManageTemplate      bool                   `toml:"manage_template"`
+	OverwriteTemplate   bool                   `toml:"overwrite_template"`
+	UseOpTypeCreate     bool                   `toml:"use_optype_create"`
+	Username            config.Secret          `toml:"username"`
+	Password            config.Secret          `toml:"password"`
+	TemplateName        string                 `toml:"template_name"`
+	Timeout             config.Duration        `toml:"timeout"`
+	URLs                []string               `toml:"urls"`
+	UsePipeline         string                 `toml:"use_pipeline"`
+	Headers             map[string]string      `toml:"headers"`
+	Log                 telegraf.Logger        `toml:"-"`
 	majorReleaseNumber  int
 	pipelineName        string
 	pipelineTagKeys     []string
@@ -64,12 +69,7 @@ const telegrafTemplate = `
 	"index_patterns" : [ "{{.TemplatePattern}}" ],
 	{{ end }}
 	"settings": {
-		"index": {
-			"refresh_interval": "10s",
-			"mapping.total_fields.limit": 5000,
-			"auto_expand_replicas" : "0-1",
-			"codec" : "best_compression"
-		}
+		"index": {{.IndexTemplate}}
 	},
 	"mappings" : {
 		{{ if (lt .Version 7) }}
@@ -126,9 +126,18 @@ const telegrafTemplate = `
 	}
 }`
 
+const defaultTemplateIndexSettings = `
+{
+	"refresh_interval": "10s",
+	"mapping.total_fields.limit": 5000,
+	"auto_expand_replicas": "0-1",
+	"codec": "best_compression"
+}`
+
 type templatePart struct {
 	TemplatePattern string
 	Version         int
+	IndexTemplate   string
 }
 
 func (*Elasticsearch) SampleConfig() string {
@@ -137,7 +146,7 @@ func (*Elasticsearch) SampleConfig() string {
 
 func (a *Elasticsearch) Connect() error {
 	if a.URLs == nil || a.IndexName == "" {
-		return fmt.Errorf("elasticsearch urls or index_name is not defined")
+		return errors.New("elasticsearch urls or index_name is not defined")
 	}
 
 	// Determine if we should process NaN and inf values
@@ -181,6 +190,16 @@ func (a *Elasticsearch) Connect() error {
 		elastic.SetHealthcheckTimeout(time.Duration(a.HealthCheckTimeout)),
 		elastic.SetGzip(a.EnableGzip),
 	)
+
+	if len(a.Headers) > 0 {
+		headers := http.Header{}
+		for k, vals := range a.Headers {
+			for _, v := range strings.Split(vals, ",") {
+				headers.Add(k, v)
+			}
+		}
+		clientOptions = append(clientOptions, elastic.SetHeaders(headers))
+	}
 
 	authOptions, err := a.getAuthOptions()
 	if err != nil {
@@ -235,7 +254,7 @@ func (a *Elasticsearch) Connect() error {
 // GetPointID generates a unique ID for a Metric Point
 func GetPointID(m telegraf.Metric) string {
 	var buffer bytes.Buffer
-	//Timestamp(ns),measurement name and Series Hash for compute the final SHA256 based hash ID
+	// Timestamp(ns),measurement name and Series Hash for compute the final SHA256 based hash ID
 
 	buffer.WriteString(strconv.FormatInt(m.Time().Local().UnixNano(), 10))
 	buffer.WriteString(m.Name())
@@ -286,6 +305,10 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 
 		br := elastic.NewBulkIndexRequest().Index(indexName).Doc(m)
 
+		if a.UseOpTypeCreate {
+			br.OpType("create")
+		}
+
 		if a.ForceDocumentID {
 			id := GetPointID(metric)
 			br.Id(id)
@@ -316,8 +339,9 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 	if res.Errors {
 		for id, err := range res.Failed() {
 			a.Log.Errorf(
-				"Elasticsearch indexing failure, id: %d, error: %s, caused by: %s, %s",
+				"Elasticsearch indexing failure, id: %d, status: %d, error: %s, caused by: %s, %s",
 				id,
+				err.Status,
 				err.Error.Reason,
 				err.Error.CausedBy["reason"],
 				err.Error.CausedBy["type"],
@@ -332,7 +356,7 @@ func (a *Elasticsearch) Write(metrics []telegraf.Metric) error {
 
 func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 	if a.TemplateName == "" {
-		return fmt.Errorf("elasticsearch template_name configuration not defined")
+		return errors.New("elasticsearch template_name configuration not defined")
 	}
 
 	templateExists, errExists := a.Client.IndexTemplateExists(a.TemplateName).Do(ctx)
@@ -352,23 +376,16 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 	}
 
 	if templatePattern == "" {
-		return fmt.Errorf("template cannot be created for dynamic index names without an index prefix")
+		return errors.New("template cannot be created for dynamic index names without an index prefix")
 	}
 
 	if (a.OverwriteTemplate) || (!templateExists) || (templatePattern != "") {
-		tp := templatePart{
-			TemplatePattern: templatePattern + "*",
-			Version:         a.majorReleaseNumber,
-		}
-
-		t := template.Must(template.New("template").Parse(telegrafTemplate))
-		var tmpl bytes.Buffer
-
-		if err := t.Execute(&tmpl, tp); err != nil {
+		data, err := a.createNewTemplate(templatePattern)
+		if err != nil {
 			return err
 		}
-		_, errCreateTemplate := a.Client.IndexPutTemplate(a.TemplateName).BodyString(tmpl.String()).Do(ctx)
 
+		_, errCreateTemplate := a.Client.IndexPutTemplate(a.TemplateName).BodyString(data.String()).Do(ctx)
 		if errCreateTemplate != nil {
 			return fmt.Errorf("elasticsearch failed to create index template %s: %w", a.TemplateName, errCreateTemplate)
 		}
@@ -380,8 +397,35 @@ func (a *Elasticsearch) manageTemplate(ctx context.Context) error {
 	return nil
 }
 
+func (a *Elasticsearch) createNewTemplate(templatePattern string) (*bytes.Buffer, error) {
+	var indexTemplate string
+	if a.IndexTemplate != nil {
+		data, err := json.Marshal(&a.IndexTemplate)
+		if err != nil {
+			return nil, fmt.Errorf("elasticsearch failed to create index settings for template %s: %w", a.TemplateName, err)
+		}
+		indexTemplate = string(data)
+	} else {
+		indexTemplate = defaultTemplateIndexSettings
+	}
+
+	tp := templatePart{
+		TemplatePattern: templatePattern + "*",
+		Version:         a.majorReleaseNumber,
+		IndexTemplate:   indexTemplate,
+	}
+
+	t := template.Must(template.New("template").Parse(telegrafTemplate))
+	var tmpl bytes.Buffer
+
+	if err := t.Execute(&tmpl, tp); err != nil {
+		return nil, err
+	}
+	return &tmpl, nil
+}
+
 func (a *Elasticsearch) GetTagKeys(indexName string) (string, []string) {
-	tagKeys := []string{}
+	tagKeys := make([]string, 0)
 	startTag := strings.Index(indexName, "{{")
 
 	for startTag >= 0 {
@@ -420,8 +464,7 @@ func (a *Elasticsearch) GetIndexName(indexName string, eventTime time.Time, tagK
 		indexName = dateReplacer.Replace(indexName)
 	}
 
-	tagValues := []interface{}{}
-
+	tagValues := make([]interface{}, 0, len(tagKeys))
 	for _, key := range tagKeys {
 		if value, ok := metricTags[key]; ok {
 			tagValues = append(tagValues, value)
@@ -472,12 +515,12 @@ func (a *Elasticsearch) getAuthOptions() ([]elastic.ClientOptionFunc, error) {
 		}
 		password, err := a.Password.Get()
 		if err != nil {
-			config.ReleaseSecret(username)
+			username.Destroy()
 			return nil, fmt.Errorf("getting password failed: %w", err)
 		}
-		fns = append(fns, elastic.SetBasicAuth(string(username), string(password)))
-		config.ReleaseSecret(username)
-		config.ReleaseSecret(password)
+		fns = append(fns, elastic.SetBasicAuth(username.String(), password.String()))
+		username.Destroy()
+		password.Destroy()
 	}
 
 	if !a.AuthBearerToken.Empty() {
@@ -485,9 +528,9 @@ func (a *Elasticsearch) getAuthOptions() ([]elastic.ClientOptionFunc, error) {
 		if err != nil {
 			return nil, fmt.Errorf("getting token failed: %w", err)
 		}
-		auth := []string{"Bearer " + string(token)}
+		auth := []string{"Bearer " + token.String()}
 		fns = append(fns, elastic.SetHeaders(http.Header{"Authorization": auth}))
-		config.ReleaseSecret(token)
+		token.Destroy()
 	}
 	return fns, nil
 }

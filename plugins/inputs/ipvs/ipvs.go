@@ -22,15 +22,14 @@ var sampleConfig string
 
 // IPVS holds the state for this input plugin
 type IPVS struct {
+	Log    telegraf.Logger `toml:"-"`
 	handle *ipvs.Handle
-	Log    telegraf.Logger
 }
 
 func (*IPVS) SampleConfig() string {
 	return sampleConfig
 }
 
-// Gather gathers the stats
 func (i *IPVS) Gather(acc telegraf.Accumulator) error {
 	if i.handle == nil {
 		h, err := ipvs.New("") // TODO: make the namespace configurable
@@ -121,7 +120,7 @@ func destinationTags(d *ipvs.Destination) map[string]string {
 	}
 }
 
-// helper: convert protocol uint16 to human readable string (if possible)
+// helper: convert protocol uint16 to human-readable string (if possible)
 func protocolToString(p uint16) string {
 	switch p {
 	case syscall.IPPROTO_TCP:
@@ -131,11 +130,11 @@ func protocolToString(p uint16) string {
 	case syscall.IPPROTO_SCTP:
 		return "sctp"
 	default:
-		return fmt.Sprintf("%d", p)
+		return strconv.FormatUint(uint64(p), 10)
 	}
 }
 
-// helper: convert addressFamily to a human readable string
+// helper: convert addressFamily to a human-readable string
 func addressFamilyToString(af uint16) string {
 	switch af {
 	case syscall.AF_INET:
@@ -143,7 +142,7 @@ func addressFamilyToString(af uint16) string {
 	case syscall.AF_INET6:
 		return "inet6"
 	default:
-		return fmt.Sprintf("%d", af)
+		return strconv.FormatUint(uint64(af), 10)
 	}
 }
 

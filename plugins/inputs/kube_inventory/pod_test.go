@@ -5,19 +5,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestPod(t *testing.T) {
 	cli := &client{}
-	selectInclude := []string{}
-	selectExclude := []string{}
 	now := time.Now()
 	started := time.Date(now.Year(), now.Month(), now.Day(), now.Hour()-1, 1, 36, 0, now.Location())
 	created := time.Date(now.Year(), now.Month(), now.Day(), now.Hour()-2, 1, 0, 0, now.Location())
@@ -441,14 +439,13 @@ func TestPod(t *testing.T) {
 	}
 	for _, v := range tests {
 		ks := &KubernetesInventory{
-			client:          cli,
-			SelectorInclude: selectInclude,
-			SelectorExclude: selectExclude,
+			client: cli,
 		}
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
-		for _, pod := range ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items {
-			ks.gatherPod(pod, acc)
+		items := ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items
+		for i := range items {
+			ks.gatherPod(&items[i], acc)
 		}
 
 		err := acc.FirstError()
@@ -606,8 +603,6 @@ func TestPodSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
-			exclude:  []string{},
 			expected: map[string]string{
 				"node_selector_select1": "s1",
 				"node_selector_select2": "s2",
@@ -620,7 +615,6 @@ func TestPodSelectorFilter(t *testing.T) {
 			},
 			hasError: false,
 			include:  []string{"select1"},
-			exclude:  []string{},
 			expected: map[string]string{
 				"node_selector_select1": "s1",
 			},
@@ -631,7 +625,6 @@ func TestPodSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
 			exclude:  []string{"select2"},
 			expected: map[string]string{
 				"node_selector_select1": "s1",
@@ -644,7 +637,6 @@ func TestPodSelectorFilter(t *testing.T) {
 			},
 			hasError: false,
 			include:  []string{"*1"},
-			exclude:  []string{},
 			expected: map[string]string{
 				"node_selector_select1": "s1",
 			},
@@ -655,7 +647,6 @@ func TestPodSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
 			exclude:  []string{"*2"},
 			expected: map[string]string{
 				"node_selector_select1": "s1",
@@ -667,7 +658,6 @@ func TestPodSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
 			exclude:  []string{"*2"},
 			expected: map[string]string{
 				"node_selector_select1": "s1",
@@ -682,8 +672,9 @@ func TestPodSelectorFilter(t *testing.T) {
 		ks.SelectorExclude = v.exclude
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
-		for _, pod := range ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items {
-			ks.gatherPod(pod, acc)
+		items := ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items
+		for i := range items {
+			ks.gatherPod(&items[i], acc)
 		}
 
 		// Grab selector tags
@@ -703,8 +694,6 @@ func TestPodSelectorFilter(t *testing.T) {
 
 func TestPodPendingContainers(t *testing.T) {
 	cli := &client{}
-	selectInclude := []string{}
-	selectExclude := []string{}
 	now := time.Now()
 	started := time.Date(now.Year(), now.Month(), now.Day(), now.Hour()-1, 1, 36, 0, now.Location())
 	created := time.Date(now.Year(), now.Month(), now.Day(), now.Hour()-2, 1, 36, 0, now.Location())
@@ -806,7 +795,6 @@ func TestPodPendingContainers(t *testing.T) {
 											LastTransitionTime: metav1.Time{Time: cond1},
 										},
 									},
-									ContainerStatuses: []corev1.ContainerStatus{},
 								},
 								ObjectMeta: metav1.ObjectMeta{
 									OwnerReferences: []metav1.OwnerReference{
@@ -986,14 +974,13 @@ func TestPodPendingContainers(t *testing.T) {
 	}
 	for _, v := range tests {
 		ks := &KubernetesInventory{
-			client:          cli,
-			SelectorInclude: selectInclude,
-			SelectorExclude: selectExclude,
+			client: cli,
 		}
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
-		for _, pod := range ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items {
-			ks.gatherPod(pod, acc)
+		items := ((v.handler.responseMap["/pods/"]).(*corev1.PodList)).Items
+		for i := range items {
+			ks.gatherPod(&items[i], acc)
 		}
 
 		err := acc.FirstError()

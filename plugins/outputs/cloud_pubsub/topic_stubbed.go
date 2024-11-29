@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"runtime"
 	"sync"
 	"testing"
@@ -18,7 +17,7 @@ import (
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
-	serializer "github.com/influxdata/telegraf/plugins/serializers/influx"
+	serializers_influx "github.com/influxdata/telegraf/plugins/serializers/influx"
 )
 
 const (
@@ -37,7 +36,7 @@ type (
 	}
 
 	stubResult struct {
-		metricIds []string
+		metricIDs []string
 
 		sendError bool
 		err       chan error
@@ -65,8 +64,8 @@ type (
 
 func getTestResources(tT *testing.T, settings pubsub.PublishSettings, testM []testMetric) (*PubSub, *stubTopic, []telegraf.Metric) {
 	// Instantiate a Influx line-protocol serializer
-	s := &serializer.Serializer{}
-	_ = s.Init() // We can ignore the error as the Init will never fail
+	s := &serializers_influx.Serializer{}
+	require.NoError(tT, s.Init())
 
 	metrics := make([]telegraf.Metric, 0, len(testM))
 	t := &stubTopic{
@@ -96,7 +95,9 @@ func getTestResources(tT *testing.T, settings pubsub.PublishSettings, testM []te
 	}
 
 	require.NoError(tT, ps.Init())
-	ps.encoder, _ = internal.NewContentEncoder(ps.ContentEncoding)
+	var err error
+	ps.encoder, err = internal.NewContentEncoder(ps.ContentEncoding)
+	require.NoError(tT, err)
 	ps.SetSerializer(s)
 
 	return ps, t, metrics
@@ -124,7 +125,7 @@ func (t *stubTopic) Publish(ctx context.Context, msg *pubsub.Message) publishRes
 
 	ids := t.parseIDs(msg)
 	r := &stubResult{
-		metricIds: ids,
+		metricIDs: ids,
 		err:       make(chan error, 1),
 		done:      make(chan struct{}, 1),
 	}
@@ -173,7 +174,7 @@ func (t *stubTopic) sendBundle() func(items interface{}) {
 
 		for _, msg := range bundled {
 			r := msg.stubResult
-			for _, id := range r.metricIds {
+			for _, id := range r.metricIDs {
 				t.published[id] = msg.Message
 			}
 
@@ -193,7 +194,8 @@ func (t *stubTopic) parseIDs(msg *pubsub.Message) []string {
 	err := p.Init()
 	require.NoError(t, err)
 
-	decoder, _ := internal.NewContentDecoder(t.ContentEncoding)
+	decoder, err := internal.NewContentDecoder(t.ContentEncoding)
+	require.NoError(t, err)
 	d, err := decoder.Decode(msg.Data)
 	if err != nil {
 		t.Errorf("unable to decode message: %v", err)
@@ -225,7 +227,7 @@ func (r *stubResult) Get(ctx context.Context) (string, error) {
 	case err := <-r.err:
 		return "", err
 	case <-r.done:
-		return fmt.Sprintf("id-%s", r.metricIds[0]), nil
+		return "id-" + r.metricIDs[0], nil
 	}
 }
 

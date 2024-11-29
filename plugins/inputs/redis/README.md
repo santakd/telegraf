@@ -39,11 +39,13 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
   ## Specify username and password for ACL auth (Redis 6.0+). You can add this
   ## to the server URI above or specify it here. The values here take
-  ## precidence.
+  ## precedence.
   # username = ""
   # password = ""
 
   ## Optional TLS Config
+  ## Check tls/config.go ClientConfig for more options
+  # tls_enable = true
   # tls_ca = "/etc/telegraf/ca.pem"
   # tls_cert = "/etc/telegraf/cert.pem"
   # tls_key = "/etc/telegraf/key.pem"
@@ -155,6 +157,12 @@ and the elapsed time since the last rdb save (rdb\_last\_save\_time\_elapsed).
   - usec(int, mircoseconds)
   - usec_per_call(float, microseconds)
 
+- redis_latency_percentiles_usec
+  - fields:
+    - p50(float, microseconds)
+    - p99(float, microseconds)
+    - p99.9(float, microseconds)
+
 - redis_replication
   - tags:
     - replication_role
@@ -182,7 +190,10 @@ and the elapsed time since the last rdb save (rdb\_last\_save\_time\_elapsed).
 - The redis_keyspace measurement has an additional database tag:
   - database
 
-- The redis_cmdstat measurement has an additional tag:
+- The redis_cmdstat measurement has an additional command tag:
+  - command
+
+- The redis_latency_percentiles_usec measurement has an additional command tag:
   - command
 
 ## Example Output
@@ -224,6 +235,12 @@ redis_command:
 
 ```text
 redis_cmdstat,command=publish,host=host,port=6379,replication_role=master,server=localhost calls=569514i,failed_calls=0i,rejected_calls=0i,usec=9916334i,usec_per_call=17.41 1559227136000000000
+```
+
+redis_latency_percentiles_usec:
+
+```text
+redis_latency_percentiles_usec,command=zadd,host=host,port=6379,replication_role=master,server=localhost p50=9.023,p99=28.031,p99.9=43.007 1559227136000000000
 ```
 
 redis_error:

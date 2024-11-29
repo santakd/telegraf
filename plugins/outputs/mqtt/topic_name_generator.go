@@ -5,6 +5,8 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/Masterminds/sprig/v3"
+
 	"github.com/influxdata/telegraf"
 )
 
@@ -16,8 +18,8 @@ type TopicNameGenerator struct {
 	template    *template.Template
 }
 
-func NewTopicNameGenerator(topicPrefix string, topic string) (*TopicNameGenerator, error) {
-	tt, err := template.New("topic_name").Parse(topic)
+func NewTopicNameGenerator(topicPrefix, topic string) (*TopicNameGenerator, error) {
+	tt, err := template.New("topic_name").Funcs(sprig.TxtFuncMap()).Parse(topic)
 	if err != nil {
 		return nil, err
 	}
@@ -53,6 +55,9 @@ func (t *TopicNameGenerator) Generate(hostname string, m telegraf.Metric) (strin
 	// This is to keep backward compatibility with previous behaviour where the plugin name was always present
 	if topic == "" {
 		return m.Name(), nil
+	}
+	if strings.HasPrefix(b.String(), "/") {
+		topic = "/" + topic
 	}
 	return topic, nil
 }

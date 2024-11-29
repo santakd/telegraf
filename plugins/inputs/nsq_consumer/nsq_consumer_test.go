@@ -36,24 +36,25 @@ func TestReadsMetricsFromNSQ(t *testing.T) {
 		{100 * time.Millisecond, -1, []byte("exit")},
 	}
 
-	addr, _ := net.ResolveTCPAddr("tcp", "127.0.0.1:4155")
+	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:4155")
+	require.NoError(t, err)
 	newMockNSQD(t, script, addr.String())
 
 	consumer := &NSQConsumer{
 		Log:                    testutil.Logger{},
-		Server:                 "127.0.0.1:4155",
 		Topic:                  "telegraf",
 		Channel:                "consume",
 		MaxInFlight:            1,
 		MaxUndeliveredMessages: defaultMaxUndeliveredMessages,
 		Nsqd:                   []string{"127.0.0.1:4155"},
 	}
+	require.NoError(t, consumer.Init())
 
 	p := &influx.Parser{}
 	require.NoError(t, p.Init())
 	consumer.SetParser(p)
 	var acc testutil.Accumulator
-	require.Len(t, acc.Metrics, 0, "There should not be any points")
+	require.Empty(t, acc.Metrics, "There should not be any points")
 	require.NoError(t, consumer.Start(&acc))
 
 	waitForPoint(&acc, t)
@@ -186,7 +187,11 @@ func (n *mockNSQD) handle(conn net.Conn) {
 					goto exit
 				}
 			case bytes.Equal(params[0], []byte("RDY")):
-				rdy, _ := strconv.Atoi(string(params[1]))
+				rdy, err := strconv.Atoi(string(params[1]))
+				if err != nil {
+					log.Print(err.Error())
+					goto exit
+				}
 				rdyCount = rdy
 			case bytes.Equal(params[0], []byte("FIN")):
 			case bytes.Equal(params[0], []byte("REQ")):
@@ -204,11 +209,7 @@ func (n *mockNSQD) handle(conn net.Conn) {
 				}
 				rdyCount--
 			}
-			buf, err := framedResponse(inst.frameType, inst.body)
-			if err != nil {
-				log.Print(err.Error())
-				goto exit
-			}
+			buf := framedResponse(inst.frameType, inst.body)
 			_, err = conn.Write(buf)
 			if err != nil {
 				log.Print(err.Error())
@@ -224,26 +225,20 @@ exit:
 	conn.Close()
 }
 
-func framedResponse(frameType int32, data []byte) ([]byte, error) {
+func framedResponse(frameType int32, data []byte) []byte {
 	var w bytes.Buffer
 
 	beBuf := make([]byte, 4)
 	size := uint32(len(data)) + 4
 
 	binary.BigEndian.PutUint32(beBuf, size)
-	_, err := w.Write(beBuf)
-	if err != nil {
-		return nil, err
-	}
+	w.Write(beBuf)
 
 	binary.BigEndian.PutUint32(beBuf, uint32(frameType))
-	_, err = w.Write(beBuf)
-	if err != nil {
-		return nil, err
-	}
+	w.Write(beBuf)
 
-	_, err = w.Write(data)
-	return w.Bytes(), err
+	w.Write(data)
+	return w.Bytes()
 }
 
 func frameMessage(m *nsq.Message) ([]byte, error) {

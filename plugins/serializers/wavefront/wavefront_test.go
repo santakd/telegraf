@@ -9,8 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/plugins/serializers"
 )
 
 func TestBuildTags(t *testing.T) {
@@ -181,7 +181,8 @@ func TestSerializeMetricFloat(t *testing.T) {
 	m := metric.New("cpu", tags, fields, now)
 
 	s := &Serializer{}
-	buf, _ := s.Serialize(m)
+	buf, err := s.Serialize(m)
+	require.NoError(t, err)
 	mS := strings.Split(strings.TrimSpace(string(buf)), "\n")
 
 	expS := []string{fmt.Sprintf("\"cpu.usage.idle\" 91.500000 %d source=\"realHost\" \"cpu\"=\"cpu0\"", now.UnixNano()/1000000000)}
@@ -200,7 +201,8 @@ func TestSerializeMetricInt(t *testing.T) {
 	m := metric.New("cpu", tags, fields, now)
 
 	s := &Serializer{}
-	buf, _ := s.Serialize(m)
+	buf, err := s.Serialize(m)
+	require.NoError(t, err)
 	mS := strings.Split(strings.TrimSpace(string(buf)), "\n")
 
 	expS := []string{fmt.Sprintf("\"cpu.usage.idle\" 91.000000 %d source=\"realHost\" \"cpu\"=\"cpu0\"", now.UnixNano()/1000000000)}
@@ -219,7 +221,8 @@ func TestSerializeMetricBoolTrue(t *testing.T) {
 	m := metric.New("cpu", tags, fields, now)
 
 	s := &Serializer{}
-	buf, _ := s.Serialize(m)
+	buf, err := s.Serialize(m)
+	require.NoError(t, err)
 	mS := strings.Split(strings.TrimSpace(string(buf)), "\n")
 
 	expS := []string{fmt.Sprintf("\"cpu.usage.idle\" 1.000000 %d source=\"realHost\" \"cpu\"=\"cpu0\"", now.UnixNano()/1000000000)}
@@ -238,7 +241,8 @@ func TestSerializeMetricBoolFalse(t *testing.T) {
 	m := metric.New("cpu", tags, fields, now)
 
 	s := &Serializer{}
-	buf, _ := s.Serialize(m)
+	buf, err := s.Serialize(m)
+	require.NoError(t, err)
 	mS := strings.Split(strings.TrimSpace(string(buf)), "\n")
 
 	expS := []string{fmt.Sprintf("\"cpu.usage.idle\" 0.000000 %d source=\"realHost\" \"cpu\"=\"cpu0\"", now.UnixNano()/1000000000)}
@@ -285,31 +289,9 @@ func TestSerializeMetricPrefix(t *testing.T) {
 	require.Equal(t, expS, mS)
 }
 
-func benchmarkMetrics(b *testing.B) [4]telegraf.Metric {
-	b.Helper()
-	now := time.Now()
-	tags := map[string]string{
-		"cpu":  "cpu0",
-		"host": "realHost",
-	}
-	newMetric := func(v interface{}) telegraf.Metric {
-		fields := map[string]interface{}{
-			"usage_idle": v,
-		}
-		m := metric.New("cpu", tags, fields, now)
-		return m
-	}
-	return [4]telegraf.Metric{
-		newMetric(91.5),
-		newMetric(91),
-		newMetric(true),
-		newMetric(false),
-	}
-}
-
 func BenchmarkSerialize(b *testing.B) {
 	s := &Serializer{}
-	metrics := benchmarkMetrics(b)
+	metrics := serializers.BenchmarkMetrics(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := s.Serialize(metrics[i%len(metrics)])
@@ -319,7 +301,7 @@ func BenchmarkSerialize(b *testing.B) {
 
 func BenchmarkSerializeBatch(b *testing.B) {
 	s := &Serializer{}
-	m := benchmarkMetrics(b)
+	m := serializers.BenchmarkMetrics(b)
 	metrics := m[:]
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

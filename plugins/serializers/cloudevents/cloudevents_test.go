@@ -19,10 +19,10 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/models"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
+	"github.com/influxdata/telegraf/plugins/serializers"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -235,28 +235,37 @@ func (*dummygen) NewV7() (uuid.UUID, error) {
 	return uuid.UUID([16]byte{}), errors.New("wrong type")
 }
 
-/* Benchmarks */
-func BenchmarkSerializer(b *testing.B) {
-	m := metric.New(
-		"test",
-		map[string]string{
-			"source": "somehost.company.com",
-			"host":   "localhost",
-			"status": "healthy",
-		},
-		map[string]interface{}{
-			"temperature":     23.5,
-			"operating_hours": 4242,
-			"connections":     123,
-			"standby":         true,
-			"SN":              "DC5423DE4CE/2",
-		},
-		time.Now(),
-	)
+func (*dummygen) NewV1AtTime(_ time.Time) (uuid.UUID, error) {
+	return uuid.UUID([16]byte{}), errors.New("wrong type")
+}
 
-	serializer := &Serializer{}
-	for n := 0; n < b.N; n++ {
-		_, err := serializer.Serialize(m)
+func (*dummygen) NewV6AtTime(_ time.Time) (uuid.UUID, error) {
+	return uuid.UUID([16]byte{}), errors.New("wrong type")
+}
+
+func (*dummygen) NewV7AtTime(_ time.Time) (uuid.UUID, error) {
+	return uuid.UUID([16]byte{}), errors.New("wrong type")
+}
+
+func BenchmarkSerialize(b *testing.B) {
+	s := &Serializer{}
+	require.NoError(b, s.Init())
+	metrics := serializers.BenchmarkMetrics(b)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.Serialize(metrics[i%len(metrics)])
+		require.NoError(b, err)
+	}
+}
+
+func BenchmarkSerializeBatch(b *testing.B) {
+	s := &Serializer{}
+	require.NoError(b, s.Init())
+	m := serializers.BenchmarkMetrics(b)
+	metrics := m[:]
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := s.SerializeBatch(metrics)
 		require.NoError(b, err)
 	}
 }

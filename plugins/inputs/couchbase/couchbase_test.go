@@ -17,13 +17,29 @@ func TestGatherServer(t *testing.T) {
 	bucket := "blastro-df"
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/pools" {
-			_, _ = w.Write(readJSON(t, "testdata/pools_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/pools_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else if r.URL.Path == "/pools/default" {
-			_, _ = w.Write(readJSON(t, "testdata/pools_default_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/pools_default_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else if r.URL.Path == "/pools/default/buckets" {
-			_, _ = w.Write(readJSON(t, "testdata/bucket_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/bucket_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else if r.URL.Path == "/pools/default/buckets/"+bucket+"/stats" {
-			_, _ = w.Write(readJSON(t, "testdata/bucket_stats_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/bucket_stats_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -112,7 +128,11 @@ func TestGatherDetailedBucketMetrics(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/pools/default/buckets/"+bucket+"/stats" || r.URL.Path == "/pools/default/buckets/"+bucket+"/nodes/"+node+"/stats" {
-					_, _ = w.Write(test.response)
+					if _, err := w.Write(test.response); err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						t.Error(err)
+						return
+					}
 				} else {
 					w.WriteHeader(http.StatusNotFound)
 				}
@@ -127,7 +147,7 @@ func TestGatherDetailedBucketMetrics(t *testing.T) {
 			err = cb.Init()
 			require.NoError(t, err)
 			var acc testutil.Accumulator
-			bucketStats := &BucketStats{}
+			bucketStats := &bucketStats{}
 			if err := json.Unmarshal(test.response, bucketStats); err != nil {
 				t.Fatal("parse bucketResponse", err)
 			}
@@ -139,8 +159,8 @@ func TestGatherDetailedBucketMetrics(t *testing.T) {
 			acc.AddFields("couchbase_bucket", fields, nil)
 
 			// Ensure we gathered only one metric (the one that we configured).
-			require.Equal(t, len(acc.Metrics), 1)
-			require.Equal(t, len(acc.Metrics[0].Fields), 1)
+			require.Len(t, acc.Metrics, 1)
+			require.Len(t, acc.Metrics[0].Fields, 1)
 		})
 	}
 }
@@ -148,11 +168,23 @@ func TestGatherDetailedBucketMetrics(t *testing.T) {
 func TestGatherNodeOnly(t *testing.T) {
 	faker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/pools" {
-			_, _ = w.Write(readJSON(t, "testdata/pools_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/pools_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else if r.URL.Path == "/pools/default" {
-			_, _ = w.Write(readJSON(t, "testdata/pools_default_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/pools_default_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else if r.URL.Path == "/pools/default/buckets" {
-			_, _ = w.Write(readJSON(t, "testdata/bucket_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/bucket_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -166,8 +198,8 @@ func TestGatherNodeOnly(t *testing.T) {
 	var acc testutil.Accumulator
 	require.NoError(t, cb.gatherServer(&acc, faker.URL))
 
-	require.Equal(t, 0, len(acc.Errors))
-	require.Equal(t, 7, len(acc.Metrics))
+	require.Empty(t, acc.Errors)
+	require.Len(t, acc.Metrics, 7)
 	acc.AssertDoesNotContainMeasurement(t, "couchbase_bucket")
 }
 
@@ -175,13 +207,29 @@ func TestGatherFailover(t *testing.T) {
 	faker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/pools":
-			_, _ = w.Write(readJSON(t, "testdata/pools_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/pools_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/pools/default":
-			_, _ = w.Write(readJSON(t, "testdata/pools_default_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/pools_default_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/pools/default/buckets":
-			_, _ = w.Write(readJSON(t, "testdata/bucket_response.json"))
+			if _, err := w.Write(readJSON(t, "testdata/bucket_response.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/settings/autoFailover":
-			_, _ = w.Write(readJSON(t, "testdata/settings_autofailover.json"))
+			if _, err := w.Write(readJSON(t, "testdata/settings_autofailover.json")); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -197,8 +245,8 @@ func TestGatherFailover(t *testing.T) {
 
 	var acc testutil.Accumulator
 	require.NoError(t, cb.gatherServer(&acc, faker.URL))
-	require.Equal(t, 0, len(acc.Errors))
-	require.Equal(t, 8, len(acc.Metrics))
+	require.Empty(t, acc.Errors)
+	require.Len(t, acc.Metrics, 8)
 
 	var metric *testutil.Metric
 	for _, m := range acc.Metrics {
@@ -210,7 +258,10 @@ func TestGatherFailover(t *testing.T) {
 
 	require.NotNil(t, metric)
 	require.Equal(t, 1, metric.Fields["count"])
-	require.Equal(t, true, metric.Fields["enabled"])
+	v, ok := metric.Fields["enabled"].(bool)
+	require.Truef(t, ok, "bool type expected, got '%T' with '%v' value instead", metric.Fields["enabled"], metric.Fields["enabled"])
+	require.True(t, v)
+
 	require.Equal(t, 2, metric.Fields["max_count"])
 	require.Equal(t, 72, metric.Fields["timeout"])
 }

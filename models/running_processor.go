@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"github.com/influxdata/telegraf"
+	logging "github.com/influxdata/telegraf/logger"
 	"github.com/influxdata/telegraf/selfstat"
 )
 
@@ -22,11 +23,12 @@ func (rp RunningProcessors) Less(i, j int) bool { return rp[i].Config.Order < rp
 
 // ProcessorConfig containing a name and filter
 type ProcessorConfig struct {
-	Name   string
-	Alias  string
-	ID     string
-	Order  int64
-	Filter Filter
+	Name     string
+	Alias    string
+	ID       string
+	Order    int64
+	Filter   Filter
+	LogLevel string
 }
 
 func NewRunningProcessor(processor telegraf.StreamingProcessor, config *ProcessorConfig) *RunningProcessor {
@@ -36,10 +38,13 @@ func NewRunningProcessor(processor telegraf.StreamingProcessor, config *Processo
 	}
 
 	processErrorsRegister := selfstat.Register("process", "errors", tags)
-	logger := NewLogger("processors", config.Name, config.Alias)
-	logger.OnErr(func() {
+	logger := logging.New("processors", config.Name, config.Alias)
+	logger.RegisterErrorCallback(func() {
 		processErrorsRegister.Incr(1)
 	})
+	if err := logger.SetLogLevel(config.LogLevel); err != nil {
+		logger.Error(err)
+	}
 	SetLoggerOnPlugin(processor, logger)
 
 	return &RunningProcessor{

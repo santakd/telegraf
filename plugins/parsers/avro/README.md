@@ -22,7 +22,7 @@ The metric name will be set according the following priority:
      in the schema definition.
 
 In case if the metric name could not be determined according to these steps
-the error will be rised and the message will not be parsed.
+the error will be raised and the message will not be parsed.
 
 ## Configuration
 
@@ -106,6 +106,12 @@ the error will be rised and the message will not be parsed.
   ## is the empty string, so a=["a", "b"] becomes a0="a", a1="b".
   ## If this were set to "_", then it would be a_0="a", a_1="b".
   # avro_field_separator = "_"
+
+  ## Define handling of union types. Possible values are:
+  ##   flatten  -- add type suffix to field name (default)
+  ##   nullable -- do not modify field name but discard "null" field values
+  ##   any      -- do not modify field name and set field value to the received type
+  # avro_union_mode = "flatten"
 
   ## Default values for given tags: optional
   # tags = { "application": "hermes", "region": "central" }

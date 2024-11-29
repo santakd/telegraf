@@ -2,6 +2,7 @@ package json_v1
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"time"
@@ -65,14 +66,14 @@ func (s *span) Validate() error {
 
 func (s *span) Trace() (string, error) {
 	if s.TraceID == "" {
-		return "", fmt.Errorf("Trace ID cannot be null")
+		return "", errors.New("trace ID cannot be null")
 	}
 	return TraceIDFromString(s.TraceID)
 }
 
 func (s *span) SpanID() (string, error) {
 	if s.ID == "" {
-		return "", fmt.Errorf("Span ID cannot be null")
+		return "", errors.New("span ID cannot be null")
 	}
 	return IDFromString(s.ID)
 }
@@ -219,7 +220,7 @@ func TraceIDFromString(s string) (string, error) {
 	var hi, lo uint64
 	var err error
 	if len(s) > 32 {
-		return "", fmt.Errorf("TraceID cannot be longer than 32 hex characters: %s", s)
+		return "", fmt.Errorf("length of TraceID cannot be greater than 32 hex characters: %s", s)
 	} else if len(s) > 16 {
 		hiLen := len(s) - 16
 		if hi, err = strconv.ParseUint(s[0:hiLen], 16, 64); err != nil {
@@ -234,7 +235,7 @@ func TraceIDFromString(s string) (string, error) {
 		}
 	}
 	if hi == 0 {
-		return fmt.Sprintf("%x", lo), nil
+		return strconv.FormatUint(lo, 16), nil
 	}
 	return fmt.Sprintf("%x%016x", hi, lo), nil
 }
@@ -242,7 +243,7 @@ func TraceIDFromString(s string) (string, error) {
 // IDFromString validates the ID and returns it in hexadecimal format.
 func IDFromString(s string) (string, error) {
 	if len(s) > 16 {
-		return "", fmt.Errorf("ID cannot be longer than 16 hex characters: %s", s)
+		return "", fmt.Errorf("length of ID cannot be greater than 16 hex characters: %s", s)
 	}
 	id, err := strconv.ParseUint(s, 16, 64)
 	if err != nil {

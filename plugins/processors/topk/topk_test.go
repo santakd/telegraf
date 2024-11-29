@@ -1,11 +1,15 @@
 package topk
 
 import (
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -51,15 +55,15 @@ type metricChange struct {
 //	they are semantically equal.
 //	Therefore the fields and tags must be in the same order that the processor would add them
 func generateAns(input []telegraf.Metric, changeSet map[int]metricChange) []telegraf.Metric {
-	answer := []telegraf.Metric{}
+	answer := make([]telegraf.Metric, 0, len(input))
 
 	// For every input metric, we check if there is a change we need to apply
 	// If there is no change for a given input metric, the metric is dropped
-	for i, metric := range input {
+	for i, m := range input {
 		change, ok := changeSet[i]
 		if ok {
 			// Deep copy the metric
-			newMetric := metric.Copy()
+			newMetric := m.Copy()
 
 			// Add new fields
 			if change.newFields != nil {
@@ -105,7 +109,7 @@ func belongs(m telegraf.Metric, ms []telegraf.Metric) bool {
 	return false
 }
 
-func subSet(a []telegraf.Metric, b []telegraf.Metric) bool {
+func subSet(a, b []telegraf.Metric) bool {
 	subset := true
 	for _, m := range a {
 		if !belongs(m, b) {
@@ -116,11 +120,11 @@ func subSet(a []telegraf.Metric, b []telegraf.Metric) bool {
 	return subset
 }
 
-func equalSets(l1 []telegraf.Metric, l2 []telegraf.Metric) bool {
+func equalSets(l1, l2 []telegraf.Metric) bool {
 	return subSet(l1, l2) && subSet(l2, l1)
 }
 
-func runAndCompare(topk *TopK, metrics []telegraf.Metric, answer []telegraf.Metric, testID string, t *testing.T) {
+func runAndCompare(topk *TopK, metrics, answer []telegraf.Metric, testID string, t *testing.T) {
 	// Sleep for `period`, otherwise the processor will only
 	// cache the metrics, but it will not process them
 	time.Sleep(time.Duration(topk.Period))
@@ -146,7 +150,7 @@ func TestTopkAggregatorsSmokeTests(t *testing.T) {
 
 	aggregators := []string{"mean", "sum", "max", "min"}
 
-	//The answer is equal to the original set for these particular scenarios
+	// The answer is equal to the original set for these particular scenarios
 	input := MetricsSet1
 	answer := MetricsSet1
 
@@ -407,7 +411,7 @@ func TestTopkGroupbyMetricName1(t *testing.T) {
 	topk.K = 1
 	topk.Aggregation = "sum"
 	topk.AddAggregateFields = []string{"value"}
-	topk.GroupBy = []string{}
+	topk.GroupBy = make([]string, 0)
 
 	// Get the input
 	input := deepCopy(MetricsSet2)
@@ -500,4 +504,78 @@ func TestTopkGroupByKeyTag(t *testing.T) {
 
 	// Run the test
 	runAndCompare(&topk, input, answer, "GroupByKeyTag test", t)
+}
+
+func TestTracking(t *testing.T) {
+	inputRaw := []telegraf.Metric{
+		metric.New("foo", map[string]string{}, map[string]interface{}{"value": 100}, time.Unix(0, 0)),
+		metric.New("bar", map[string]string{}, map[string]interface{}{"value": 22}, time.Unix(0, 0)),
+		metric.New("baz", map[string]string{}, map[string]interface{}{"value": 1}, time.Unix(0, 0)),
+	}
+
+	var mu sync.Mutex
+	delivered := make([]telegraf.DeliveryInfo, 0, len(inputRaw))
+	notify := func(di telegraf.DeliveryInfo) {
+		mu.Lock()
+		defer mu.Unlock()
+		delivered = append(delivered, di)
+	}
+
+	input := make([]telegraf.Metric, 0, len(inputRaw))
+	for _, m := range inputRaw {
+		tm, _ := metric.WithTracking(m, notify)
+		input = append(input, tm)
+	}
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"foo",
+			map[string]string{},
+			map[string]interface{}{"value": 100},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"bar",
+			map[string]string{},
+			map[string]interface{}{"value": 22},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"baz",
+			map[string]string{},
+			map[string]interface{}{"value": 1},
+			time.Unix(0, 0),
+		),
+	}
+
+	// Only doing this over 1 period, so we should expect the same number of
+	// metrics back.
+	plugin := &TopK{
+		Period:      1,
+		K:           3,
+		Aggregation: "mean",
+		Fields:      []string{"value"},
+		Log:         testutil.Logger{},
+	}
+	plugin.Reset()
+
+	// Process expected metrics and compare with resulting metrics
+	var actual []telegraf.Metric
+	require.Eventuallyf(t, func() bool {
+		actual = plugin.Apply(input...)
+		return len(actual) > 0
+	}, time.Second, 100*time.Millisecond, "never got any metrics")
+	testutil.RequireMetricsEqual(t, expected, actual)
+
+	// Simulate output acknowledging delivery
+	for _, m := range actual {
+		m.Accept()
+	}
+
+	// Check delivery
+	require.Eventuallyf(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(input) == len(delivered)
+	}, time.Second, 100*time.Millisecond, "%d delivered but %d expected", len(delivered), len(expected))
 }

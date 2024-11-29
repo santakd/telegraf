@@ -122,9 +122,7 @@ func jsonToZipkinThrift(jsonRaw []byte) ([]byte, error) {
 
 func thriftToJSONSpans(thriftData []byte) ([]byte, error) {
 	buffer := thrift.NewTMemoryBuffer()
-	if _, err := buffer.Write(thriftData); err != nil {
-		return nil, fmt.Errorf("error in buffer write: %w", err)
-	}
+	buffer.Write(thriftData)
 
 	transport := thrift.NewTBinaryProtocolConf(buffer, nil)
 	_, size, err := transport.ReadListBegin(context.Background())
@@ -146,6 +144,5 @@ func thriftToJSONSpans(thriftData []byte) ([]byte, error) {
 		return nil, fmt.Errorf("error ending thrift read: %w", err)
 	}
 
-	out, _ := json.MarshalIndent(spans, "", "    ")
-	return out, nil
+	return json.MarshalIndent(spans, "", "    ")
 }

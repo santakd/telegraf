@@ -17,6 +17,15 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
 
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `username` and
+`password` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
+
 ## Configuration
 
 ```toml @sample.conf
@@ -24,8 +33,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 [[inputs.rabbitmq]]
   ## Management Plugin url. (default: http://localhost:15672)
   # url = "http://localhost:15672"
-  ## Tag added to rabbitmq_overview series; deprecated: use tags
-  # name = "rmq-server-1"
+
   ## Credentials
   # username = "guest"
   # password = "guest"
@@ -50,11 +58,6 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## A list of nodes to gather as the rabbitmq_node measurement. If not
   ## specified, metrics for all nodes are gathered.
   # nodes = ["rabbit@node1", "rabbit@node2"]
-
-  ## A list of queues to gather as the rabbitmq_queue measurement. If not
-  ## specified, metrics for all queues are gathered.
-  ## Deprecated in 1.6: Use queue_name_include instead.
-  # queues = ["telegraf"]
 
   ## A list of exchanges to gather as the rabbitmq_exchange measurement. If not
   ## specified, metrics for all exchanges are gathered.

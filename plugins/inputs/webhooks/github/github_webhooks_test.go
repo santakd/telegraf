@@ -6,13 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf/testutil"
 )
 
-func GithubWebhookRequest(event string, jsonString string, t *testing.T) {
+func GithubWebhookRequest(t *testing.T, event, jsonString string) {
 	var acc testutil.Accumulator
 	gh := &GithubWebhook{Path: "/github", acc: &acc, log: testutil.Logger{}}
-	req, _ := http.NewRequest("POST", "/github", strings.NewReader(jsonString))
+	req, err := http.NewRequest("POST", "/github", strings.NewReader(jsonString))
+	require.NoError(t, err)
 	req.Header.Add("X-Github-Event", event)
 	w := httptest.NewRecorder()
 	gh.eventHandler(w, req)
@@ -21,10 +24,11 @@ func GithubWebhookRequest(event string, jsonString string, t *testing.T) {
 	}
 }
 
-func GithubWebhookRequestWithSignature(event string, jsonString string, t *testing.T, signature string, expectedStatus int) {
+func GithubWebhookRequestWithSignature(t *testing.T, event, jsonString, signature string, expectedStatus int) {
 	var acc testutil.Accumulator
 	gh := &GithubWebhook{Path: "/github", Secret: "signature", acc: &acc, log: testutil.Logger{}}
-	req, _ := http.NewRequest("POST", "/github", strings.NewReader(jsonString))
+	req, err := http.NewRequest("POST", "/github", strings.NewReader(jsonString))
+	require.NoError(t, err)
 	req.Header.Add("X-Github-Event", event)
 	req.Header.Add("X-Hub-Signature", signature)
 	w := httptest.NewRecorder()
@@ -35,91 +39,91 @@ func GithubWebhookRequestWithSignature(event string, jsonString string, t *testi
 }
 
 func TestCommitCommentEvent(t *testing.T) {
-	GithubWebhookRequest("commit_comment", CommitCommentEventJSON(), t)
+	GithubWebhookRequest(t, "commit_comment", CommitCommentEventJSON())
 }
 
 func TestPingEvent(t *testing.T) {
-	GithubWebhookRequest("ping", "", t)
+	GithubWebhookRequest(t, "ping", "")
 }
 
 func TestDeleteEvent(t *testing.T) {
-	GithubWebhookRequest("delete", DeleteEventJSON(), t)
+	GithubWebhookRequest(t, "delete", DeleteEventJSON())
 }
 
 func TestDeploymentEvent(t *testing.T) {
-	GithubWebhookRequest("deployment", DeploymentEventJSON(), t)
+	GithubWebhookRequest(t, "deployment", DeploymentEventJSON())
 }
 
 func TestDeploymentStatusEvent(t *testing.T) {
-	GithubWebhookRequest("deployment_status", DeploymentStatusEventJSON(), t)
+	GithubWebhookRequest(t, "deployment_status", DeploymentStatusEventJSON())
 }
 
 func TestForkEvent(t *testing.T) {
-	GithubWebhookRequest("fork", ForkEventJSON(), t)
+	GithubWebhookRequest(t, "fork", ForkEventJSON())
 }
 
 func TestGollumEvent(t *testing.T) {
-	GithubWebhookRequest("gollum", GollumEventJSON(), t)
+	GithubWebhookRequest(t, "gollum", GollumEventJSON())
 }
 
 func TestIssueCommentEvent(t *testing.T) {
-	GithubWebhookRequest("issue_comment", IssueCommentEventJSON(), t)
+	GithubWebhookRequest(t, "issue_comment", IssueCommentEventJSON())
 }
 
 func TestIssuesEvent(t *testing.T) {
-	GithubWebhookRequest("issues", IssuesEventJSON(), t)
+	GithubWebhookRequest(t, "issues", IssuesEventJSON())
 }
 
 func TestMemberEvent(t *testing.T) {
-	GithubWebhookRequest("member", MemberEventJSON(), t)
+	GithubWebhookRequest(t, "member", MemberEventJSON())
 }
 
 func TestMembershipEvent(t *testing.T) {
-	GithubWebhookRequest("membership", MembershipEventJSON(), t)
+	GithubWebhookRequest(t, "membership", MembershipEventJSON())
 }
 
 func TestPageBuildEvent(t *testing.T) {
-	GithubWebhookRequest("page_build", PageBuildEventJSON(), t)
+	GithubWebhookRequest(t, "page_build", PageBuildEventJSON())
 }
 
 func TestPublicEvent(t *testing.T) {
-	GithubWebhookRequest("public", PublicEventJSON(), t)
+	GithubWebhookRequest(t, "public", PublicEventJSON())
 }
 
 func TestPullRequestReviewCommentEvent(t *testing.T) {
-	GithubWebhookRequest("pull_request_review_comment", PullRequestReviewCommentEventJSON(), t)
+	GithubWebhookRequest(t, "pull_request_review_comment", PullRequestReviewCommentEventJSON())
 }
 
 func TestPushEvent(t *testing.T) {
-	GithubWebhookRequest("push", PushEventJSON(), t)
+	GithubWebhookRequest(t, "push", PushEventJSON())
 }
 
 func TestReleaseEvent(t *testing.T) {
-	GithubWebhookRequest("release", ReleaseEventJSON(), t)
+	GithubWebhookRequest(t, "release", ReleaseEventJSON())
 }
 
 func TestRepositoryEvent(t *testing.T) {
-	GithubWebhookRequest("repository", RepositoryEventJSON(), t)
+	GithubWebhookRequest(t, "repository", RepositoryEventJSON())
 }
 
 func TestStatusEvent(t *testing.T) {
-	GithubWebhookRequest("status", StatusEventJSON(), t)
+	GithubWebhookRequest(t, "status", StatusEventJSON())
 }
 
 func TestTeamAddEvent(t *testing.T) {
-	GithubWebhookRequest("team_add", TeamAddEventJSON(), t)
+	GithubWebhookRequest(t, "team_add", TeamAddEventJSON())
 }
 
 func TestWatchEvent(t *testing.T) {
-	GithubWebhookRequest("watch", WatchEventJSON(), t)
+	GithubWebhookRequest(t, "watch", WatchEventJSON())
 }
 
 func TestEventWithSignatureFail(t *testing.T) {
-	GithubWebhookRequestWithSignature("watch", WatchEventJSON(), t, "signature", http.StatusBadRequest)
+	GithubWebhookRequestWithSignature(t, "watch", WatchEventJSON(), "signature", http.StatusBadRequest)
 }
 
 func TestEventWithSignatureSuccess(t *testing.T) {
-	GithubWebhookRequestWithSignature("watch", WatchEventJSON(), t, generateSignature("signature", []byte(WatchEventJSON())), http.StatusOK)
+	GithubWebhookRequestWithSignature(t, "watch", WatchEventJSON(), generateSignature("signature", []byte(WatchEventJSON())), http.StatusOK)
 }
 
 func TestCheckSignatureSuccess(t *testing.T) {

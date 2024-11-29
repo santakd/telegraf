@@ -13,7 +13,6 @@ import (
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal/snmp"
 	"github.com/influxdata/telegraf/plugins/common/parallel"
-	si "github.com/influxdata/telegraf/plugins/inputs/snmp"
 	"github.com/influxdata/telegraf/plugins/processors"
 )
 
@@ -25,7 +24,6 @@ type keyType = string
 type valType = nameMap
 
 type mapFunc func(agent string) (nameMap, error)
-type makeTableFunc func(string) (*si.Table, error)
 
 type sigMap map[string]chan struct{}
 
@@ -43,8 +41,8 @@ type IfName struct {
 
 	Log telegraf.Logger `toml:"-"`
 
-	ifTable  *si.Table
-	ifXTable *si.Table
+	ifTable  *snmp.Table
+	ifXTable *snmp.Table
 
 	cache    *TTLCache
 	lock     sync.Mutex
@@ -52,9 +50,6 @@ type IfName struct {
 	sigs     sigMap
 
 	getMapRemote mapFunc
-	makeTable    makeTableFunc
-
-	translator si.Translator
 }
 
 const minRetry = 5 * time.Minute
@@ -65,7 +60,6 @@ func (*IfName) SampleConfig() string {
 
 func (d *IfName) Init() error {
 	d.getMapRemote = d.getMapRemoteNoMock
-	d.makeTable = d.makeTableNoMock
 
 	c := NewTTLCache(time.Duration(d.CacheTTL), d.CacheSize)
 	d.cache = &c
@@ -75,10 +69,6 @@ func (d *IfName) Init() error {
 	if _, err := snmp.NewWrapper(d.ClientConfig); err != nil {
 		return fmt.Errorf("parsing SNMP client config: %w", err)
 	}
-
-	// Since OIDs in this plugin are always numeric there is no need
-	// to translate.
-	d.translator = si.NewNetsnmpTranslator()
 
 	return nil
 }
@@ -98,7 +88,7 @@ func (d *IfName) addTag(metric telegraf.Metric) error {
 
 	num, err := strconv.ParseUint(numS, 10, 64)
 	if err != nil {
-		return fmt.Errorf("couldn't parse source tag as uint")
+		return errors.New("couldn't parse source tag as uint")
 	}
 
 	firstTime := true
@@ -212,7 +202,7 @@ func (d *IfName) getMap(agent string) (entry nameMap, age time.Duration, err err
 		if ok {
 			return m, age, nil
 		}
-		return nil, 0, fmt.Errorf("getting remote table from cache")
+		return nil, 0, errors.New("getting remote table from cache")
 	}
 
 	// The cache missed and this is the first request for this
@@ -221,7 +211,7 @@ func (d *IfName) getMap(agent string) (entry nameMap, age time.Duration, err err
 
 	d.lock.Lock()
 	if err != nil {
-		//snmp failure.  signal without saving to cache
+		// snmp failure.  signal without saving to cache
 		close(sig)
 		delete(d.sigs, agent)
 
@@ -253,8 +243,8 @@ func (d *IfName) getMapRemoteNoMock(agent string) (nameMap, error) {
 		return nil, fmt.Errorf("connecting when fetching interface names: %w", err)
 	}
 
-	//try ifXtable and ifName first.  if that fails, fall back to
-	//ifTable and ifDescr
+	// try ifXtable and ifName first.  if that fails, fall back to
+	// ifTable and ifDescr
 	var m nameMap
 	if m, err = d.buildMap(gs, d.ifXTable); err == nil {
 		return m, nil
@@ -275,61 +265,55 @@ func init() {
 			AgentTag:           "agent",
 			CacheSize:          100,
 			MaxParallelLookups: 100,
-			ClientConfig: snmp.ClientConfig{
-				Retries:        3,
-				MaxRepetitions: 10,
-				Timeout:        config.Duration(5 * time.Second),
-				Version:        2,
-				Community:      "public",
-			},
-			CacheTTL: config.Duration(8 * time.Hour),
+			ClientConfig:       *snmp.DefaultClientConfig(),
+			CacheTTL:           config.Duration(8 * time.Hour),
 		}
 	})
 }
 
-func (d *IfName) makeTableNoMock(oid string) (*si.Table, error) {
+func (d *IfName) makeTable(oid string) (*snmp.Table, error) {
 	var err error
-	tab := si.Table{
+	tab := snmp.Table{
 		Name:       "ifTable",
 		IndexAsTag: true,
-		Fields: []si.Field{
+		Fields: []snmp.Field{
 			{Oid: oid, Name: "ifName"},
 		},
 	}
 
-	err = tab.Init(d.translator)
+	err = tab.Init(nil)
 	if err != nil {
-		//Init already wraps
+		// Init already wraps
 		return nil, err
 	}
 
 	return &tab, nil
 }
 
-func (d *IfName) buildMap(gs snmp.GosnmpWrapper, tab *si.Table) (nameMap, error) {
+func (d *IfName) buildMap(gs snmp.GosnmpWrapper, tab *snmp.Table) (nameMap, error) {
 	var err error
 
-	rtab, err := tab.Build(gs, true, d.translator)
+	rtab, err := tab.Build(gs, true)
 	if err != nil {
-		//Build already wraps
+		// Build already wraps
 		return nil, err
 	}
 
 	if len(rtab.Rows) == 0 {
-		return nil, fmt.Errorf("empty table")
+		return nil, errors.New("empty table")
 	}
 
 	t := make(nameMap)
 	for _, v := range rtab.Rows {
 		iStr, ok := v.Tags["index"]
 		if !ok {
-			//should always have an index tag because the table should
-			//always have IndexAsTag true
-			return nil, fmt.Errorf("no index tag")
+			// should always have an index tag because the table should
+			// always have IndexAsTag true
+			return nil, errors.New("no index tag")
 		}
 		i, err := strconv.ParseUint(iStr, 10, 64)
 		if err != nil {
-			return nil, fmt.Errorf("index tag isn't a uint")
+			return nil, errors.New("index tag isn't a uint")
 		}
 		nameIf, ok := v.Fields["ifName"]
 		if !ok {

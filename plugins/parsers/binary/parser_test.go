@@ -11,16 +11,15 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
 	"github.com/influxdata/telegraf/metric"
-	"github.com/influxdata/telegraf/plugins/inputs"
-	"github.com/influxdata/telegraf/plugins/inputs/file"
-	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/testutil"
-
-	"github.com/stretchr/testify/require"
+	test "github.com/influxdata/telegraf/testutil/plugin_input"
 )
 
 var dummyEntry = Entry{
@@ -37,9 +36,9 @@ func generateBinary(data []interface{}, order binary.ByteOrder) ([]byte, error) 
 		var err error
 		switch v := x.(type) {
 		case []byte:
-			_, err = buf.Write(v)
+			buf.Write(v)
 		case string:
-			_, err = buf.WriteString(v)
+			buf.WriteString(v)
 		default:
 			err = binary.Write(&buf, order, x)
 		}
@@ -1410,60 +1409,45 @@ func TestCases(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, folders)
 
-	// Register the plugin
-	inputs.Add("file", func() telegraf.Input {
-		return &file.File{}
-	})
-
-	// Prepare the influx parser for expectations
-	parser := &influx.Parser{}
-	require.NoError(t, parser.Init())
-
 	for _, f := range folders {
 		testcasePath := filepath.Join("testcases", f.Name())
 		configFilename := filepath.Join(testcasePath, "telegraf.conf")
-		expectedFilename := filepath.Join(testcasePath, "expected.out")
-		expectedErrorFilename := filepath.Join(testcasePath, "expected.err")
 
 		t.Run(f.Name(), func(t *testing.T) {
-			// Read the expected output if any
-			var expected []telegraf.Metric
-			if _, err := os.Stat(expectedFilename); err == nil {
-				var err error
-				expected, err = testutil.ParseMetricsFromFile(expectedFilename, parser)
-				require.NoError(t, err)
-			}
-
-			// Read the expected errors if any
-			var expectedErrors []string
-			if _, err := os.Stat(expectedErrorFilename); err == nil {
-				var err error
-				expectedErrors, err = testutil.ParseLinesFromFile(expectedErrorFilename)
-				require.NoError(t, err)
-				require.NotEmpty(t, expectedErrors)
-			}
-
 			// Configure the plugin
 			cfg := config.NewConfig()
 			require.NoError(t, cfg.LoadConfig(configFilename))
 			require.NoError(t, err)
+			require.Len(t, cfg.Inputs, 1)
 
-			// Gather the metrics from the input file configure
+			// Tune the test-plugin
+			plugin := cfg.Inputs[0].Input.(*test.Plugin)
+			plugin.Path = testcasePath
+			require.NoError(t, plugin.Init())
+
+			// Gather the metrics and check for potential errors
 			var acc testutil.Accumulator
-			var actualErrors []string
-			for _, input := range cfg.Inputs {
-				require.NoError(t, input.Init())
-				if err := input.Gather(&acc); err != nil {
-					actualErrors = append(actualErrors, err.Error())
-				}
+			err := plugin.Gather(&acc)
+			switch len(plugin.ExpectedErrors) {
+			case 0:
+				require.NoError(t, err)
+			case 1:
+				require.ErrorContains(t, err, plugin.ExpectedErrors[0])
+			default:
+				require.Contains(t, plugin.ExpectedErrors, err.Error())
 			}
 
-			// Check for potential errors
-			require.ElementsMatch(t, actualErrors, expectedErrors)
+			// Determine checking options
+			options := []cmp.Option{
+				cmpopts.EquateApprox(0, 1e-6),
+			}
+			if plugin.ShouldIgnoreTimestamp {
+				options = append(options, testutil.IgnoreTime())
+			}
 
 			// Process expected metrics and compare with resulting metrics
 			actual := acc.GetTelegrafMetrics()
-			testutil.RequireMetricsEqual(t, expected, actual)
+			testutil.RequireMetricsEqual(t, plugin.Expected, actual, options...)
 		})
 	}
 }
@@ -1478,8 +1462,8 @@ func TestHexEncoding(t *testing.T) {
 	}
 
 	parser := &Parser{
-		Endianness:  "be",
-		HexEncoding: true,
+		Endianness: "be",
+		Encoding:   "hex",
 		Configs: []Config{
 			{
 				Entries: []Entry{dummyEntry},
@@ -1498,4 +1482,133 @@ func TestHexEncoding(t *testing.T) {
 	metrics, err := parser.Parse([]byte(encoded))
 	require.NoError(t, err)
 	require.NotEmpty(t, metrics)
+}
+
+var benchmarkData = [][]byte{
+	{
+		0x6d, 0x79, 0x68, 0x6f, 0x73, 0x74, 0x00, 0x33,
+		0x2e, 0x31, 0x31, 0x2e, 0x35, 0x00, 0x70, 0x79,
+		0x74, 0x68, 0x6f, 0x6e, 0x00, 0x40, 0x14, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00,
+	},
+	{
+		0x6d, 0x79, 0x68, 0x6f, 0x73, 0x74, 0x00, 0x33,
+		0x2e, 0x31, 0x31, 0x2e, 0x34, 0x00, 0x70, 0x79,
+		0x74, 0x68, 0x6f, 0x6e, 0x00, 0x40, 0x10, 0x00,
+		0x00, 0x00, 0x00, 0x00, 0x00,
+	},
+}
+
+func TestBenchmarkData(t *testing.T) {
+	plugin := &Parser{
+		Endianness: "be",
+		Configs: []Config{
+			{
+				MetricName: "benchmark",
+				Entries: []Entry{
+					{
+						Name:       "source",
+						Type:       "string",
+						Assignment: "tag",
+						Terminator: "null",
+					},
+					{
+						Name:       "tags_sdkver",
+						Type:       "string",
+						Assignment: "tag",
+						Terminator: "null",
+					},
+					{
+						Name:       "tags_platform",
+						Type:       "string",
+						Assignment: "tag",
+						Terminator: "null",
+					},
+					{
+						Name:       "value",
+						Type:       "float64",
+						Assignment: "field",
+					},
+				},
+			},
+		},
+	}
+	require.NoError(t, plugin.Init())
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"benchmark",
+			map[string]string{
+				"source":        "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.5",
+			},
+			map[string]interface{}{
+				"value": 5.0,
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"benchmark",
+			map[string]string{
+				"source":        "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.4",
+			},
+			map[string]interface{}{
+				"value": 4.0,
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	actual := make([]telegraf.Metric, 0, 2)
+	for _, buf := range benchmarkData {
+		m, err := plugin.Parse(buf)
+		require.NoError(t, err)
+		actual = append(actual, m...)
+	}
+	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime(), testutil.SortMetrics())
+}
+
+func BenchmarkParsing(b *testing.B) {
+	plugin := &Parser{
+		Endianness: "be",
+		Configs: []Config{
+			{
+				MetricName: "benchmark",
+				Entries: []Entry{
+					{
+						Name:       "source",
+						Type:       "string",
+						Assignment: "tag",
+						Terminator: "null",
+					},
+					{
+						Name:       "tags_sdkver",
+						Type:       "string",
+						Assignment: "tag",
+						Terminator: "null",
+					},
+					{
+						Name:       "tags_platform",
+						Type:       "string",
+						Assignment: "tag",
+						Terminator: "null",
+					},
+					{
+						Name:       "value",
+						Type:       "float64",
+						Assignment: "field",
+					},
+				},
+			},
+		},
+	}
+	require.NoError(b, plugin.Init())
+
+	for n := 0; n < b.N; n++ {
+		//nolint:errcheck // Benchmarking so skip the error check to avoid the unnecessary operations
+		plugin.Parse(benchmarkData[n%2])
+	}
 }

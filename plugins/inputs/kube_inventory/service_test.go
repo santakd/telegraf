@@ -5,13 +5,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 func TestService(t *testing.T) {
@@ -107,8 +107,9 @@ func TestService(t *testing.T) {
 		ks.SelectorExclude = v.exclude
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
-		for _, service := range ((v.handler.responseMap["/service/"]).(*corev1.ServiceList)).Items {
-			ks.gatherService(service, acc)
+		items := ((v.handler.responseMap["/service/"]).(*corev1.ServiceList)).Items
+		for i := range items {
+			ks.gatherService(&items[i], acc)
 		}
 
 		err := acc.FirstError()
@@ -190,8 +191,6 @@ func TestServiceSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
-			exclude:  []string{},
 			expected: map[string]string{
 				"selector_select1": "s1",
 				"selector_select2": "s2",
@@ -204,7 +203,6 @@ func TestServiceSelectorFilter(t *testing.T) {
 			},
 			hasError: false,
 			include:  []string{"select1"},
-			exclude:  []string{},
 			expected: map[string]string{
 				"selector_select1": "s1",
 			},
@@ -215,7 +213,6 @@ func TestServiceSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
 			exclude:  []string{"select2"},
 			expected: map[string]string{
 				"selector_select1": "s1",
@@ -228,7 +225,6 @@ func TestServiceSelectorFilter(t *testing.T) {
 			},
 			hasError: false,
 			include:  []string{"*1"},
-			exclude:  []string{},
 			expected: map[string]string{
 				"selector_select1": "s1",
 			},
@@ -239,7 +235,6 @@ func TestServiceSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
 			exclude:  []string{"*2"},
 			expected: map[string]string{
 				"selector_select1": "s1",
@@ -251,7 +246,6 @@ func TestServiceSelectorFilter(t *testing.T) {
 				responseMap: responseMap,
 			},
 			hasError: false,
-			include:  []string{},
 			exclude:  []string{"*2"},
 			expected: map[string]string{
 				"selector_select1": "s1",
@@ -266,8 +260,9 @@ func TestServiceSelectorFilter(t *testing.T) {
 		ks.SelectorExclude = v.exclude
 		require.NoError(t, ks.createSelectorFilters())
 		acc := new(testutil.Accumulator)
-		for _, service := range ((v.handler.responseMap["/service/"]).(*corev1.ServiceList)).Items {
-			ks.gatherService(service, acc)
+		items := ((v.handler.responseMap["/service/"]).(*corev1.ServiceList)).Items
+		for i := range items {
+			ks.gatherService(&items[i], acc)
 		}
 
 		// Grab selector tags

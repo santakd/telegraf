@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -18,35 +19,35 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal/choice"
-	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-var DisconnectedServersBehaviors = []string{"error", "skip"}
+var disconnectedServersBehaviors = []string{"error", "skip"}
 
 type MongoDB struct {
-	Servers                     []string
-	Ssl                         Ssl
-	GatherClusterStatus         bool
-	GatherPerdbStats            bool
-	GatherColStats              bool
-	GatherTopStat               bool
-	DisconnectedServersBehavior string
-	ColStatsDbs                 []string
-	tlsint.ClientConfig
+	Servers                     []string `toml:"servers"`
+	GatherClusterStatus         bool     `toml:"gather_cluster_status"`
+	GatherPerdbStats            bool     `toml:"gather_perdb_stats"`
+	GatherColStats              bool     `toml:"gather_col_stats"`
+	GatherTopStat               bool     `toml:"gather_top_stat"`
+	DisconnectedServersBehavior string   `toml:"disconnected_servers_behavior"`
+	ColStatsDbs                 []string `toml:"col_stats_dbs"`
+	common_tls.ClientConfig
+	Ssl ssl
 
 	Log telegraf.Logger `toml:"-"`
 
-	clients   []*Server
+	clients   []*server
 	tlsConfig *tls.Config
 }
 
-type Ssl struct {
-	Enabled bool     `toml:"ssl_enabled" deprecated:"1.3.0;use 'tls_*' options instead"`
-	CaCerts []string `toml:"cacerts" deprecated:"1.3.0;use 'tls_ca' instead"`
+type ssl struct {
+	Enabled bool     `toml:"ssl_enabled" deprecated:"1.3.0;1.35.0;use 'tls_*' options instead"`
+	CaCerts []string `toml:"cacerts" deprecated:"1.3.0;1.35.0;use 'tls_ca' instead"`
 }
 
 func (*MongoDB) SampleConfig() string {
@@ -58,7 +59,7 @@ func (m *MongoDB) Init() error {
 		m.DisconnectedServersBehavior = "error"
 	}
 
-	if err := choice.Check(m.DisconnectedServersBehavior, DisconnectedServersBehaviors); err != nil {
+	if err := choice.Check(m.DisconnectedServersBehavior, disconnectedServersBehaviors); err != nil {
 		return fmt.Errorf("disconnected_servers_behavior: %w", err)
 	}
 
@@ -68,13 +69,13 @@ func (m *MongoDB) Init() error {
 			InsecureSkipVerify: m.ClientConfig.InsecureSkipVerify,
 		}
 		if len(m.Ssl.CaCerts) == 0 {
-			return fmt.Errorf("you must explicitly set insecure_skip_verify to skip certificate validation")
+			return errors.New("you must explicitly set insecure_skip_verify to skip certificate validation")
 		}
 
 		roots := x509.NewCertPool()
 		for _, caCert := range m.Ssl.CaCerts {
 			if ok := roots.AppendCertsFromPEM([]byte(caCert)); !ok {
-				return fmt.Errorf("failed to parse root certificate")
+				return errors.New("failed to parse root certificate")
 			}
 		}
 		m.tlsConfig.RootCAs = roots
@@ -102,6 +103,41 @@ func (m *MongoDB) Start(telegraf.Accumulator) error {
 	}
 
 	return nil
+}
+
+func (m *MongoDB) Gather(acc telegraf.Accumulator) error {
+	var wg sync.WaitGroup
+	for _, client := range m.clients {
+		wg.Add(1)
+		go func(srv *server) {
+			defer wg.Done()
+			if m.DisconnectedServersBehavior == "skip" {
+				if err := srv.ping(); err != nil {
+					m.Log.Debugf("Failed to ping server: %s", err)
+					return
+				}
+			}
+
+			err := srv.gatherData(acc, m.GatherClusterStatus, m.GatherPerdbStats, m.GatherColStats, m.GatherTopStat, m.ColStatsDbs)
+			if err != nil {
+				m.Log.Errorf("Failed to gather data: %s", err)
+			}
+		}(client)
+	}
+
+	wg.Wait()
+	return nil
+}
+
+// Stop disconnects mongo connections when stop or reload
+func (m *MongoDB) Stop() {
+	for _, server := range m.clients {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		if err := server.client.Disconnect(ctx); err != nil {
+			m.Log.Errorf("Disconnecting from %q failed: %v", server.hostname, err)
+		}
+		cancel()
+	}
 }
 
 func (m *MongoDB) setupConnection(connURL string) error {
@@ -142,49 +178,12 @@ func (m *MongoDB) setupConnection(connURL string) error {
 		m.Log.Errorf("Unable to ping MongoDB: %s", err)
 	}
 
-	server := &Server{
+	server := &server{
 		client:   client,
 		hostname: u.Host,
-		Log:      m.Log,
+		log:      m.Log,
 	}
 	m.clients = append(m.clients, server)
-	return nil
-}
-
-// Stop disconnect mongo connections when stop or reload
-func (m *MongoDB) Stop() {
-	for _, server := range m.clients {
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		if err := server.client.Disconnect(ctx); err != nil {
-			m.Log.Errorf("Disconnecting from %q failed: %v", server.hostname, err)
-		}
-		cancel()
-	}
-}
-
-// Reads stats from all configured servers accumulates stats.
-// Returns one of the errors encountered while gather stats (if any).
-func (m *MongoDB) Gather(acc telegraf.Accumulator) error {
-	var wg sync.WaitGroup
-	for _, client := range m.clients {
-		wg.Add(1)
-		go func(srv *Server) {
-			defer wg.Done()
-			if m.DisconnectedServersBehavior == "skip" {
-				if err := srv.ping(); err != nil {
-					m.Log.Debugf("Failed to ping server: %s", err)
-					return
-				}
-			}
-
-			err := srv.gatherData(acc, m.GatherClusterStatus, m.GatherPerdbStats, m.GatherColStats, m.GatherTopStat, m.ColStatsDbs)
-			if err != nil {
-				m.Log.Errorf("Failed to gather data: %s", err)
-			}
-		}(client)
-	}
-
-	wg.Wait()
 	return nil
 }
 

@@ -11,16 +11,20 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/blues/jsonata-go"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	chttp "github.com/influxdata/telegraf/plugins/common/http"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/secretstores"
 )
 
 //go:embed sample.conf
 var sampleConfig string
+
+const defaultIdleConnTimeoutMinutes = 5
 
 type HTTP struct {
 	URL                string            `toml:"url"`
@@ -31,7 +35,7 @@ type HTTP struct {
 	SuccessStatusCodes []int             `toml:"success_status_codes"`
 	Transformation     string            `toml:"transformation"`
 	Log                telegraf.Logger   `toml:"-"`
-	chttp.HTTPClientConfig
+	common_http.HTTPClientConfig
 	DecryptionConfig
 
 	client      *http.Client
@@ -46,6 +50,12 @@ func (h *HTTP) SampleConfig() string {
 
 func (h *HTTP) Init() error {
 	ctx := context.Background()
+
+	// Prevent idle connections from hanging around forever on telegraf reload
+	if h.HTTPClientConfig.IdleConnTimeout == 0 {
+		h.HTTPClientConfig.IdleConnTimeout = config.Duration(defaultIdleConnTimeoutMinutes * time.Minute)
+	}
+
 	client, err := h.HTTPClientConfig.CreateClient(ctx, h.Log)
 	if err != nil {
 		return err
@@ -158,7 +168,7 @@ func (h *HTTP) query() ([]byte, error) {
 	}
 
 	for k, v := range h.Headers {
-		if strings.ToLower(k) == "host" {
+		if strings.EqualFold(k, "host") {
 			request.Host = v
 		} else {
 			request.Header.Add(k, v)
@@ -201,14 +211,13 @@ func (h *HTTP) setRequestAuth(request *http.Request) error {
 		if err != nil {
 			return fmt.Errorf("getting username failed: %w", err)
 		}
+		defer username.Destroy()
 		password, err := h.Password.Get()
 		if err != nil {
-			config.ReleaseSecret(username)
 			return fmt.Errorf("getting password failed: %w", err)
 		}
-		request.SetBasicAuth(string(username), string(password))
-		config.ReleaseSecret(username)
-		config.ReleaseSecret(password)
+		defer password.Destroy()
+		request.SetBasicAuth(username.String(), password.String())
 	}
 
 	if !h.Token.Empty() {
@@ -216,8 +225,8 @@ func (h *HTTP) setRequestAuth(request *http.Request) error {
 		if err != nil {
 			return fmt.Errorf("getting token failed: %w", err)
 		}
-		bearer := "Bearer " + strings.TrimSpace(string(token))
-		config.ReleaseSecret(token)
+		defer token.Destroy()
+		bearer := "Bearer " + strings.TrimSpace(token.String())
 		request.Header.Set("Authorization", bearer)
 	}
 
@@ -226,7 +235,7 @@ func (h *HTTP) setRequestAuth(request *http.Request) error {
 
 // Register the secret-store on load.
 func init() {
-	secretstores.Add("http", func(id string) telegraf.SecretStore {
+	secretstores.Add("http", func(string) telegraf.SecretStore {
 		return &HTTP{}
 	})
 }

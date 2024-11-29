@@ -2,7 +2,7 @@ package cookie
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,9 +12,10 @@ import (
 
 	clockutil "github.com/benbjohnson/clock"
 	"github.com/google/go-cmp/cmp"
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -35,6 +36,8 @@ var fakeCookie = &http.Cookie{
 	Name:  "test-cookie",
 	Value: "this is an auth cookie",
 }
+
+var reqHeaderValSecret = config.NewSecret([]byte(reqHeaderVal))
 
 type fakeServer struct {
 	*httptest.Server
@@ -60,7 +63,11 @@ func newFakeServer(t *testing.T) fakeServer {
 				authed()
 			case authEndpointWithBody:
 				body, err := io.ReadAll(r.Body)
-				require.NoError(t, err)
+				if err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					t.Error(err)
+					return
+				}
 				if !cmp.Equal([]byte(reqBody), body) {
 					w.WriteHeader(http.StatusUnauthorized)
 					return
@@ -86,7 +93,11 @@ func newFakeServer(t *testing.T) fakeServer {
 					w.WriteHeader(http.StatusForbidden)
 					return
 				}
-				_, _ = w.Write([]byte("good test response"))
+				if _, err := w.Write([]byte("good test response")); err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					t.Error(err)
+					return
+				}
 			}
 		})),
 		int32: &c,
@@ -121,7 +132,7 @@ func TestAuthConfig_Start(t *testing.T) {
 		Username string
 		Password string
 		Body     string
-		Headers  map[string]string
+		Headers  map[string]*config.Secret
 	}
 	type args struct {
 		renewal  time.Duration
@@ -155,7 +166,7 @@ func TestAuthConfig_Start(t *testing.T) {
 				endpoint: authEndpointWithHeader,
 			},
 			fields: fields{
-				Headers: map[string]string{reqHeaderKey: reqHeaderVal},
+				Headers: map[string]*config.Secret{reqHeaderKey: &reqHeaderValSecret},
 			},
 			firstAuthCount:    1,
 			lastAuthCount:     3,
@@ -189,7 +200,7 @@ func TestAuthConfig_Start(t *testing.T) {
 				renewal:  renewal,
 				endpoint: authEndpointWithBasicAuth,
 			},
-			wantErr:           fmt.Errorf("cookie auth renewal received status code: 401 (Unauthorized) []"),
+			wantErr:           errors.New("cookie auth renewal received status code: 401 (Unauthorized) []"),
 			firstAuthCount:    0,
 			lastAuthCount:     0,
 			firstHTTPResponse: http.StatusForbidden,
@@ -220,7 +231,7 @@ func TestAuthConfig_Start(t *testing.T) {
 				renewal:  renewal,
 				endpoint: authEndpointWithBody,
 			},
-			wantErr:           fmt.Errorf("cookie auth renewal received status code: 401 (Unauthorized) []"),
+			wantErr:           errors.New("cookie auth renewal received status code: 401 (Unauthorized) []"),
 			firstAuthCount:    0,
 			lastAuthCount:     0,
 			firstHTTPResponse: http.StatusForbidden,
@@ -228,7 +239,6 @@ func TestAuthConfig_Start(t *testing.T) {
 		},
 	}
 	for _, tt := range tests {
-		tt := tt
 		t.Run(tt.name, func(t *testing.T) {
 			srv := newFakeServer(t)
 			c := &CookieAuthConfig{

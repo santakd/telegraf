@@ -1,7 +1,7 @@
 package github
 
 import (
-	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/influxdata/telegraf"
@@ -10,11 +10,11 @@ import (
 
 const meas = "github_webhooks"
 
-type Event interface {
+type event interface {
 	NewMetric() telegraf.Metric
 }
 
-type Repository struct {
+type repository struct {
 	Repository string `json:"full_name"`
 	Private    bool   `json:"private"`
 	Stars      int    `json:"stargazers_count"`
@@ -22,44 +22,44 @@ type Repository struct {
 	Issues     int    `json:"open_issues_count"`
 }
 
-type Sender struct {
+type sender struct {
 	User  string `json:"login"`
 	Admin bool   `json:"site_admin"`
 }
 
-type CommitComment struct {
+type commitComment struct {
 	Commit string `json:"commit_id"`
 	Body   string `json:"body"`
 }
 
-type Deployment struct {
+type deployment struct {
 	Commit      string `json:"sha"`
 	Task        string `json:"task"`
 	Environment string `json:"environment"`
 	Description string `json:"description"`
 }
 
-type Page struct {
+type page struct {
 	Name   string `json:"page_name"`
 	Title  string `json:"title"`
 	Action string `json:"action"`
 }
 
-type Issue struct {
+type issue struct {
 	Number   int    `json:"number"`
 	Title    string `json:"title"`
 	Comments int    `json:"comments"`
 }
 
-type IssueComment struct {
+type issueComment struct {
 	Body string `json:"body"`
 }
 
-type Team struct {
+type team struct {
 	Name string `json:"name"`
 }
 
-type PullRequest struct {
+type pullRequest struct {
 	Number       int    `json:"number"`
 	State        string `json:"state"`
 	Title        string `json:"title"`
@@ -70,34 +70,34 @@ type PullRequest struct {
 	ChangedFiles int    `json:"changed_files"`
 }
 
-type PullRequestReviewComment struct {
+type pullRequestReviewComment struct {
 	File    string `json:"path"`
 	Comment string `json:"body"`
 }
 
-type Release struct {
+type release struct {
 	TagName string `json:"tag_name"`
 }
 
-type DeploymentStatus struct {
+type deploymentStatus struct {
 	State       string `json:"state"`
 	Description string `json:"description"`
 }
 
-type CommitCommentEvent struct {
-	Comment    CommitComment `json:"comment"`
-	Repository Repository    `json:"repository"`
-	Sender     Sender        `json:"sender"`
+type commitCommentEvent struct {
+	Comment    commitComment `json:"comment"`
+	Repository repository    `json:"repository"`
+	Sender     sender        `json:"sender"`
 }
 
-func (s CommitCommentEvent) NewMetric() telegraf.Metric {
+func (s commitCommentEvent) NewMetric() telegraf.Metric {
 	event := "commit_comment"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":   s.Repository.Stars,
@@ -110,21 +110,21 @@ func (s CommitCommentEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type CreateEvent struct {
+type createEvent struct {
 	Ref        string     `json:"ref"`
 	RefType    string     `json:"ref_type"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s CreateEvent) NewMetric() telegraf.Metric {
+func (s createEvent) NewMetric() telegraf.Metric {
 	event := "create"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":   s.Repository.Stars,
@@ -137,21 +137,21 @@ func (s CreateEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type DeleteEvent struct {
+type deleteEvent struct {
 	Ref        string     `json:"ref"`
 	RefType    string     `json:"ref_type"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s DeleteEvent) NewMetric() telegraf.Metric {
+func (s deleteEvent) NewMetric() telegraf.Metric {
 	event := "delete"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":   s.Repository.Stars,
@@ -164,20 +164,20 @@ func (s DeleteEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type DeploymentEvent struct {
-	Deployment Deployment `json:"deployment"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type deploymentEvent struct {
+	Deployment deployment `json:"deployment"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s DeploymentEvent) NewMetric() telegraf.Metric {
+func (s deploymentEvent) NewMetric() telegraf.Metric {
 	event := "deployment"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":       s.Repository.Stars,
@@ -192,21 +192,21 @@ func (s DeploymentEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type DeploymentStatusEvent struct {
-	Deployment       Deployment       `json:"deployment"`
-	DeploymentStatus DeploymentStatus `json:"deployment_status"`
-	Repository       Repository       `json:"repository"`
-	Sender           Sender           `json:"sender"`
+type deploymentStatusEvent struct {
+	Deployment       deployment       `json:"deployment"`
+	DeploymentStatus deploymentStatus `json:"deployment_status"`
+	Repository       repository       `json:"repository"`
+	Sender           sender           `json:"sender"`
 }
 
-func (s DeploymentStatusEvent) NewMetric() telegraf.Metric {
+func (s deploymentStatusEvent) NewMetric() telegraf.Metric {
 	event := "delete"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":          s.Repository.Stars,
@@ -223,20 +223,20 @@ func (s DeploymentStatusEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type ForkEvent struct {
-	Forkee     Repository `json:"forkee"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type forkEvent struct {
+	Forkee     repository `json:"forkee"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s ForkEvent) NewMetric() telegraf.Metric {
+func (s forkEvent) NewMetric() telegraf.Metric {
 	event := "fork"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,
@@ -248,21 +248,21 @@ func (s ForkEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type GollumEvent struct {
-	Pages      []Page     `json:"pages"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type gollumEvent struct {
+	Pages      []page     `json:"pages"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
 // REVIEW: Going to be lazy and not deal with the pages.
-func (s GollumEvent) NewMetric() telegraf.Metric {
+func (s gollumEvent) NewMetric() telegraf.Metric {
 	event := "gollum"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,
@@ -273,22 +273,22 @@ func (s GollumEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type IssueCommentEvent struct {
-	Issue      Issue        `json:"issue"`
-	Comment    IssueComment `json:"comment"`
-	Repository Repository   `json:"repository"`
-	Sender     Sender       `json:"sender"`
+type issueCommentEvent struct {
+	Issue      issue        `json:"issue"`
+	Comment    issueComment `json:"comment"`
+	Repository repository   `json:"repository"`
+	Sender     sender       `json:"sender"`
 }
 
-func (s IssueCommentEvent) NewMetric() telegraf.Metric {
+func (s issueCommentEvent) NewMetric() telegraf.Metric {
 	event := "issue_comment"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
-		"issue":      fmt.Sprintf("%v", s.Issue.Number),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
+		"issue":      strconv.Itoa(s.Issue.Number),
 	}
 	f := map[string]interface{}{
 		"stars":    s.Repository.Stars,
@@ -302,22 +302,22 @@ func (s IssueCommentEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type IssuesEvent struct {
+type issuesEvent struct {
 	Action     string     `json:"action"`
-	Issue      Issue      `json:"issue"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+	Issue      issue      `json:"issue"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s IssuesEvent) NewMetric() telegraf.Metric {
+func (s issuesEvent) NewMetric() telegraf.Metric {
 	event := "issue"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
-		"issue":      fmt.Sprintf("%v", s.Issue.Number),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
+		"issue":      strconv.Itoa(s.Issue.Number),
 		"action":     s.Action,
 	}
 	f := map[string]interface{}{
@@ -331,20 +331,20 @@ func (s IssuesEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type MemberEvent struct {
-	Member     Sender     `json:"member"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type memberEvent struct {
+	Member     sender     `json:"member"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s MemberEvent) NewMetric() telegraf.Metric {
+func (s memberEvent) NewMetric() telegraf.Metric {
 	event := "member"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":           s.Repository.Stars,
@@ -357,19 +357,19 @@ func (s MemberEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type MembershipEvent struct {
+type membershipEvent struct {
 	Action string `json:"action"`
-	Member Sender `json:"member"`
-	Sender Sender `json:"sender"`
-	Team   Team   `json:"team"`
+	Member sender `json:"member"`
+	Sender sender `json:"sender"`
+	Team   team   `json:"team"`
 }
 
-func (s MembershipEvent) NewMetric() telegraf.Metric {
+func (s membershipEvent) NewMetric() telegraf.Metric {
 	event := "membership"
 	t := map[string]string{
 		"event":  event,
 		"user":   s.Sender.User,
-		"admin":  fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":  strconv.FormatBool(s.Sender.Admin),
 		"action": s.Action,
 	}
 	f := map[string]interface{}{
@@ -380,19 +380,19 @@ func (s MembershipEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type PageBuildEvent struct {
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type pageBuildEvent struct {
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s PageBuildEvent) NewMetric() telegraf.Metric {
+func (s pageBuildEvent) NewMetric() telegraf.Metric {
 	event := "page_build"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,
@@ -403,19 +403,19 @@ func (s PageBuildEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type PublicEvent struct {
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type publicEvent struct {
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s PublicEvent) NewMetric() telegraf.Metric {
+func (s publicEvent) NewMetric() telegraf.Metric {
 	event := "public"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,
@@ -426,23 +426,23 @@ func (s PublicEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type PullRequestEvent struct {
+type pullRequestEvent struct {
 	Action      string      `json:"action"`
-	PullRequest PullRequest `json:"pull_request"`
-	Repository  Repository  `json:"repository"`
-	Sender      Sender      `json:"sender"`
+	PullRequest pullRequest `json:"pull_request"`
+	Repository  repository  `json:"repository"`
+	Sender      sender      `json:"sender"`
 }
 
-func (s PullRequestEvent) NewMetric() telegraf.Metric {
+func (s pullRequestEvent) NewMetric() telegraf.Metric {
 	event := "pull_request"
 	t := map[string]string{
 		"event":      event,
 		"action":     s.Action,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
-		"prNumber":   fmt.Sprintf("%v", s.PullRequest.Number),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
+		"prNumber":   strconv.Itoa(s.PullRequest.Number),
 	}
 	f := map[string]interface{}{
 		"stars":        s.Repository.Stars,
@@ -460,22 +460,22 @@ func (s PullRequestEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type PullRequestReviewCommentEvent struct {
-	Comment     PullRequestReviewComment `json:"comment"`
-	PullRequest PullRequest              `json:"pull_request"`
-	Repository  Repository               `json:"repository"`
-	Sender      Sender                   `json:"sender"`
+type pullRequestReviewCommentEvent struct {
+	Comment     pullRequestReviewComment `json:"comment"`
+	PullRequest pullRequest              `json:"pull_request"`
+	Repository  repository               `json:"repository"`
+	Sender      sender                   `json:"sender"`
 }
 
-func (s PullRequestReviewCommentEvent) NewMetric() telegraf.Metric {
+func (s pullRequestReviewCommentEvent) NewMetric() telegraf.Metric {
 	event := "pull_request_review_comment"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
-		"prNumber":   fmt.Sprintf("%v", s.PullRequest.Number),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
+		"prNumber":   strconv.Itoa(s.PullRequest.Number),
 	}
 	f := map[string]interface{}{
 		"stars":        s.Repository.Stars,
@@ -495,22 +495,22 @@ func (s PullRequestReviewCommentEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type PushEvent struct {
+type pushEvent struct {
 	Ref        string     `json:"ref"`
 	Before     string     `json:"before"`
 	After      string     `json:"after"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s PushEvent) NewMetric() telegraf.Metric {
+func (s pushEvent) NewMetric() telegraf.Metric {
 	event := "push"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,
@@ -524,20 +524,20 @@ func (s PushEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type ReleaseEvent struct {
-	Release    Release    `json:"release"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type releaseEvent struct {
+	Release    release    `json:"release"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s ReleaseEvent) NewMetric() telegraf.Metric {
+func (s releaseEvent) NewMetric() telegraf.Metric {
 	event := "release"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":   s.Repository.Stars,
@@ -549,19 +549,19 @@ func (s ReleaseEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type RepositoryEvent struct {
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type repositoryEvent struct {
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s RepositoryEvent) NewMetric() telegraf.Metric {
+func (s repositoryEvent) NewMetric() telegraf.Metric {
 	event := "repository"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,
@@ -572,21 +572,21 @@ func (s RepositoryEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type StatusEvent struct {
+type statusEvent struct {
 	Commit     string     `json:"sha"`
 	State      string     `json:"state"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s StatusEvent) NewMetric() telegraf.Metric {
+func (s statusEvent) NewMetric() telegraf.Metric {
 	event := "status"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,
@@ -599,20 +599,20 @@ func (s StatusEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type TeamAddEvent struct {
-	Team       Team       `json:"team"`
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type teamAddEvent struct {
+	Team       team       `json:"team"`
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s TeamAddEvent) NewMetric() telegraf.Metric {
+func (s teamAddEvent) NewMetric() telegraf.Metric {
 	event := "team_add"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":    s.Repository.Stars,
@@ -624,19 +624,19 @@ func (s TeamAddEvent) NewMetric() telegraf.Metric {
 	return m
 }
 
-type WatchEvent struct {
-	Repository Repository `json:"repository"`
-	Sender     Sender     `json:"sender"`
+type watchEvent struct {
+	Repository repository `json:"repository"`
+	Sender     sender     `json:"sender"`
 }
 
-func (s WatchEvent) NewMetric() telegraf.Metric {
+func (s watchEvent) NewMetric() telegraf.Metric {
 	event := "delete"
 	t := map[string]string{
 		"event":      event,
 		"repository": s.Repository.Repository,
-		"private":    fmt.Sprintf("%v", s.Repository.Private),
+		"private":    strconv.FormatBool(s.Repository.Private),
 		"user":       s.Sender.User,
-		"admin":      fmt.Sprintf("%v", s.Sender.Admin),
+		"admin":      strconv.FormatBool(s.Sender.Admin),
 	}
 	f := map[string]interface{}{
 		"stars":  s.Repository.Stars,

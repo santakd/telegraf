@@ -15,7 +15,7 @@ func TestMsgPackTime32(t *testing.T) {
 	var nsec int64
 	t1 := MessagePackTime{time: time.Unix(sec, nsec)}
 
-	require.Equal(t, t1.Len(), 4)
+	require.Equal(t, 4, t1.Len())
 
 	buf := make([]byte, t1.Len())
 	require.NoError(t, t1.MarshalBinaryTo(buf))
@@ -33,7 +33,7 @@ func TestMsgPackTime64(t *testing.T) {
 	var nsec int64 = 999999999
 	t1 := MessagePackTime{time: time.Unix(sec, nsec)}
 
-	require.Equal(t, t1.Len(), 8)
+	require.Equal(t, 8, t1.Len())
 
 	buf := make([]byte, t1.Len())
 	require.NoError(t, t1.MarshalBinaryTo(buf))
@@ -51,7 +51,7 @@ func TestMsgPackTime96(t *testing.T) {
 	var nsec int64 = 111111111
 	t1 := MessagePackTime{time: time.Unix(sec, nsec)}
 
-	require.Equal(t, t1.Len(), 12)
+	require.Equal(t, 12, t1.Len())
 
 	buf := make([]byte, t1.Len())
 	require.NoError(t, t1.MarshalBinaryTo(buf))
@@ -65,7 +65,7 @@ func TestMsgPackTime96(t *testing.T) {
 	// Testing the default value: 0001-01-01T00:00:00Z
 	t1 = MessagePackTime{}
 
-	require.Equal(t, t1.Len(), 12)
+	require.Equal(t, 12, t1.Len())
 	require.NoError(t, t1.MarshalBinaryTo(buf))
 
 	t2 = new(MessagePackTime)
@@ -81,57 +81,71 @@ func TestMsgPackTimeEdgeCases(t *testing.T) {
 
 	// Unix epoch. Begin of 4bytes dates
 	// Nanoseconds: 0x00000000, Seconds: 0x0000000000000000
-	ts, _ := time.Parse(time.RFC3339, "1970-01-01T00:00:00Z")
-	bs, _ := hex.DecodeString("d6ff00000000")
+	ts, err := time.Parse(time.RFC3339, "1970-01-01T00:00:00Z")
+	require.NoError(t, err)
+	bs, err := hex.DecodeString("d6ff00000000")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
 	// End of 4bytes dates
 	// Nanoseconds: 0x00000000, Seconds: 0x00000000ffffffff
-	ts, _ = time.Parse(time.RFC3339, "2106-02-07T06:28:15Z")
-	bs, _ = hex.DecodeString("d6ffffffffff")
+	ts, err = time.Parse(time.RFC3339, "2106-02-07T06:28:15Z")
+	require.NoError(t, err)
+	bs, err = hex.DecodeString("d6ffffffffff")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
 	// Begin of 8bytes dates
 	// Nanoseconds: 0x00000000, Seconds: 0x0000000100000000
-	ts, _ = time.Parse(time.RFC3339, "2106-02-07T06:28:16Z")
-	bs, _ = hex.DecodeString("d7ff0000000100000000")
+	ts, err = time.Parse(time.RFC3339, "2106-02-07T06:28:16Z")
+	require.NoError(t, err)
+	bs, err = hex.DecodeString("d7ff0000000100000000")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
 	// Just after Unix epoch. Non zero nanoseconds
 	// Nanoseconds: 0x00000001, Seconds: 0x0000000000000000
-	ts, _ = time.Parse(time.RFC3339Nano, "1970-01-01T00:00:00.000000001Z")
-	bs, _ = hex.DecodeString("d7ff0000000400000000")
+	ts, err = time.Parse(time.RFC3339Nano, "1970-01-01T00:00:00.000000001Z")
+	require.NoError(t, err)
+	bs, err = hex.DecodeString("d7ff0000000400000000")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
 	// End of 8bytes dates
 	// Nanoseconds: 0x00000000, Seconds: 0x00000003ffffffff
-	ts, _ = time.Parse(time.RFC3339Nano, "2514-05-30T01:53:03.000000000Z")
-	bs, _ = hex.DecodeString("d7ff00000003ffffffff")
+	ts, err = time.Parse(time.RFC3339Nano, "2514-05-30T01:53:03.000000000Z")
+	require.NoError(t, err)
+	bs, err = hex.DecodeString("d7ff00000003ffffffff")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
 	// Begin of 12bytes date
 	// Nanoseconds: 0x00000000, Seconds: 0x0000000400000000
-	ts, _ = time.Parse(time.RFC3339Nano, "2514-05-30T01:53:04.000000000Z")
-	bs, _ = hex.DecodeString("c70cff000000000000000400000000")
+	ts, err = time.Parse(time.RFC3339Nano, "2514-05-30T01:53:04.000000000Z")
+	require.NoError(t, err)
+	bs, err = hex.DecodeString("c70cff000000000000000400000000")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
 	// Zero value, 0001-01-01T00:00:00Z
 	// Nanoseconds: 0x00000000, Seconds: 0xfffffff1886e0900
 	ts = time.Time{}
-	bs, _ = hex.DecodeString("c70cff00000000fffffff1886e0900")
+	bs, err = hex.DecodeString("c70cff00000000fffffff1886e0900")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
 	// Max value
 	// Nanoseconds: 0x3b9ac9ff, Seconds: 0x7fffffffffffffff
 	ts = time.Unix(math.MaxInt64, 999_999_999).UTC()
-	bs, _ = hex.DecodeString("c70cff3b9ac9ff7fffffffffffffff")
+	bs, err = hex.DecodeString("c70cff3b9ac9ff7fffffffffffffff")
+	require.NoError(t, err)
 	times = append(times, ts)
 	expected = append(expected, bs)
 
@@ -141,7 +155,8 @@ func TestMsgPackTimeEdgeCases(t *testing.T) {
 		m := Metric{Time: t1}
 
 		buf = buf[:0]
-		buf, _ = m.MarshalMsg(buf)
+		buf, err = m.MarshalMsg(buf)
+		require.NoError(t, err)
 		require.Equal(t, expected[i], buf[12:len(buf)-14])
 	}
 }

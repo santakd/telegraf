@@ -9,7 +9,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/plugins/inputs/postgresql"
+	"github.com/influxdata/telegraf/plugins/common/postgresql"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -29,12 +29,11 @@ func TestPgBouncerGeneratesMetricsIntegration(t *testing.T) {
 		},
 		WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
 	}
-	err := backend.Start()
-	require.NoError(t, err, "failed to start container")
+	require.NoError(t, backend.Start(), "failed to start container")
 	defer backend.Terminate()
 
 	container := testutil.Container{
-		Image:        "z9pascal/pgbouncer-container:1.18.0-latest",
+		Image:        "z9pascal/pgbouncer-container:1.23.1-latest",
 		ExposedPorts: []string{pgBouncerServicePort},
 		Env: map[string]string{
 			"PG_ENV_POSTGRESQL_USER": "pgbouncer",
@@ -45,8 +44,7 @@ func TestPgBouncerGeneratesMetricsIntegration(t *testing.T) {
 			wait.ForLog("LOG process up"),
 		),
 	}
-	err = container.Start()
-	require.NoError(t, err, "failed to start container")
+	require.NoError(t, container.Start(), "failed to start container")
 	defer container.Terminate()
 
 	addr := fmt.Sprintf(
@@ -56,14 +54,16 @@ func TestPgBouncerGeneratesMetricsIntegration(t *testing.T) {
 	)
 
 	p := &PgBouncer{
-		Service: postgresql.Service{
+		Config: postgresql.Config{
 			Address:     config.NewSecret([]byte(addr)),
 			IsPgBouncer: true,
 		},
 	}
+	require.NoError(t, p.Init())
 
 	var acc testutil.Accumulator
 	require.NoError(t, p.Start(&acc))
+	defer p.Stop()
 	require.NoError(t, p.Gather(&acc))
 
 	intMetricsPgBouncer := []string{
@@ -98,7 +98,7 @@ func TestPgBouncerGeneratesMetricsIntegration(t *testing.T) {
 		metricsCounted++
 	}
 
-	require.True(t, metricsCounted > 0)
+	require.Positive(t, metricsCounted)
 	require.Equal(t, len(intMetricsPgBouncer)+len(intMetricsPgBouncerPools), metricsCounted)
 }
 
@@ -123,7 +123,7 @@ func TestPgBouncerGeneratesMetricsIntegrationShowCommands(t *testing.T) {
 	defer backend.Terminate()
 
 	container := testutil.Container{
-		Image:        "z9pascal/pgbouncer-container:1.18.0-latest",
+		Image:        "z9pascal/pgbouncer-container:1.23.1-latest",
 		ExposedPorts: []string{pgBouncerServicePort},
 		Env: map[string]string{
 			"PG_ENV_POSTGRESQL_USER": "pgbouncer",
@@ -145,15 +145,17 @@ func TestPgBouncerGeneratesMetricsIntegrationShowCommands(t *testing.T) {
 	)
 
 	p := &PgBouncer{
-		Service: postgresql.Service{
+		Config: postgresql.Config{
 			Address:     config.NewSecret([]byte(addr)),
 			IsPgBouncer: true,
 		},
 		ShowCommands: []string{"pools", "lists", "databases"},
 	}
+	require.NoError(t, p.Init())
 
 	var acc testutil.Accumulator
 	require.NoError(t, p.Start(&acc))
+	defer p.Stop()
 	require.NoError(t, p.Gather(&acc))
 
 	intMetricsPgBouncerPools := []string{
@@ -208,6 +210,6 @@ func TestPgBouncerGeneratesMetricsIntegrationShowCommands(t *testing.T) {
 		metricsCounted++
 	}
 
-	require.True(t, metricsCounted > 0)
+	require.Positive(t, metricsCounted)
 	require.Equal(t, len(intMetricsPgBouncerPools)+len(intMetricsPgBouncerLists)+len(intMetricsPgBouncerDatabases), metricsCounted)
 }

@@ -19,6 +19,9 @@ import (
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
+//go:embed sample.conf
+var sampleConfig string
+
 const (
 	defaultHostSys = "/sys"
 	cpufreq        = "cpufreq"
@@ -26,9 +29,9 @@ const (
 )
 
 type LinuxCPU struct {
-	Log       telegraf.Logger `toml:"-"`
 	PathSysfs string          `toml:"host_sys"`
 	Metrics   []string        `toml:"metrics"`
+	Log       telegraf.Logger `toml:"-"`
 	cpus      []cpu
 }
 
@@ -44,9 +47,6 @@ type prop struct {
 	optional bool
 }
 
-//go:embed sample.conf
-var sampleConfig string
-
 func (g *LinuxCPU) SampleConfig() string {
 	return sampleConfig
 }
@@ -58,7 +58,7 @@ func (g *LinuxCPU) Init() error {
 
 	if len(g.Metrics) == 0 {
 		// The user has not enabled any of the metrics
-		return fmt.Errorf("no metrics selected")
+		return errors.New("no metrics selected")
 	}
 
 	cpus, err := g.discoverCpus()
@@ -66,7 +66,7 @@ func (g *LinuxCPU) Init() error {
 		return err
 	} else if len(cpus) == 0 {
 		// Although the user has specified metrics to collect, `discoverCpus` failed to find the required metrics
-		return fmt.Errorf("no CPUs detected to track")
+		return errors.New("no CPUs detected to track")
 	}
 	g.cpus = cpus
 
@@ -172,21 +172,11 @@ func (g *LinuxCPU) discoverCpus() ([]cpu, error) {
 	return cpus, nil
 }
 
-func init() {
-	inputs.Add("linux_cpu", func() telegraf.Input {
-		return &LinuxCPU{
-			Metrics: []string{"cpufreq"},
-		}
-	})
-}
-
 func validatePath(propPath string) error {
 	f, err := os.Open(propPath)
-
 	if os.IsNotExist(err) {
-		return fmt.Errorf("CPU property does not exist: [%s]", propPath)
+		return fmt.Errorf("file with CPU property does not exist: %q", propPath)
 	}
-
 	if err != nil {
 		return fmt.Errorf("cannot get system information for CPU property %q: %w", propPath, err)
 	}
@@ -208,8 +198,16 @@ func readUintFromFile(propPath string) (uint64, error) {
 	if err != nil && !errors.Is(err, io.EOF) {
 		return 0, fmt.Errorf("error on reading file: %w", err)
 	} else if n == 0 {
-		return 0, fmt.Errorf("error on reading file: file is empty")
+		return 0, errors.New("error on reading file: file is empty")
 	}
 
 	return strconv.ParseUint(string(buffer[:n-1]), 10, 64)
+}
+
+func init() {
+	inputs.Add("linux_cpu", func() telegraf.Input {
+		return &LinuxCPU{
+			Metrics: []string{"cpufreq"},
+		}
+	})
 }

@@ -2,7 +2,6 @@ package github
 
 import (
 	"net/http"
-	"reflect"
 	"testing"
 
 	gh "github.com/google/go-github/v32/github"
@@ -34,7 +33,8 @@ func TestSplitRepositoryNameWithWorkingExample(t *testing.T) {
 
 	for _, tt := range validRepositoryNames {
 		t.Run(tt.fullName, func(t *testing.T) {
-			owner, repository, _ := splitRepositoryName(tt.fullName)
+			owner, repository, err := splitRepositoryName(tt.fullName)
+			require.NoError(t, err)
 
 			require.Equal(t, tt.owner, owner)
 			require.Equal(t, tt.repository, repository)
@@ -103,7 +103,7 @@ func TestGetTags(t *testing.T) {
 		"license":  licenseName,
 	}
 
-	require.Equal(t, true, reflect.DeepEqual(getTagsReturn, correctTagsReturn))
+	require.Equal(t, getTagsReturn, correctTagsReturn)
 }
 
 func TestGetFields(t *testing.T) {
@@ -136,5 +136,5 @@ func TestGetFields(t *testing.T) {
 	correctFieldReturn["subscribers"] = 5
 	correctFieldReturn["watchers"] = 6
 
-	require.Equal(t, true, reflect.DeepEqual(getFieldsReturn, correctFieldReturn))
+	require.Equal(t, getFieldsReturn, correctFieldReturn)
 }

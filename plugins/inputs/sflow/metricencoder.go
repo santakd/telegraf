@@ -8,13 +8,13 @@ import (
 	"github.com/influxdata/telegraf/metric"
 )
 
-func makeMetrics(p *V5Format) []telegraf.Metric {
+func makeMetrics(p *v5Format) []telegraf.Metric {
 	now := time.Now()
-	metrics := []telegraf.Metric{}
+	metrics := make([]telegraf.Metric, 0)
 	tags := map[string]string{
 		"agent_address": p.AgentAddress.String(),
 	}
-	fields := map[string]interface{}{}
+	fields := make(map[string]interface{}, 2)
 	for _, sample := range p.Samples {
 		tags["input_ifindex"] = strconv.FormatUint(uint64(sample.SampleData.InputIfIndex), 10)
 		tags["output_ifindex"] = strconv.FormatUint(uint64(sample.SampleData.OutputIfIndex), 10)
@@ -26,8 +26,8 @@ func makeMetrics(p *V5Format) []telegraf.Metric {
 
 		for _, flowRecord := range sample.SampleData.FlowRecords {
 			if flowRecord.FlowData != nil {
-				tags2 := flowRecord.FlowData.GetTags()
-				fields2 := flowRecord.FlowData.GetFields()
+				tags2 := flowRecord.FlowData.getTags()
+				fields2 := flowRecord.FlowData.getFields()
 				for k, v := range tags {
 					tags2[k] = v
 				}

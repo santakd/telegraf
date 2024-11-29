@@ -106,6 +106,9 @@ type Metric interface {
 	// SetTime sets the timestamp of the Metric.
 	SetTime(t time.Time)
 
+	// SetType sets the value-type of the Metric.
+	SetType(t ValueType)
+
 	// HashID returns an unique identifier for the series.
 	HashID() uint64
 
@@ -141,4 +144,11 @@ type UnwrappableMetric interface {
 	// Unwrap allows to access the underlying raw metric if an implementation
 	// wraps it in the first place.
 	Unwrap() Metric
+}
+
+type TrackingMetric interface {
+	// TrackingID returns the ID used for tracking the metric
+	TrackingID() TrackingID
+	TrackingData() TrackingData
+	UnwrappableMetric
 }

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
@@ -14,6 +15,11 @@ import (
 )
 
 var localhost = "localhost"
+
+const (
+	DefaultDelta   = 0.001
+	DefaultEpsilon = 0.1
+)
 
 // GetLocalHost returns the DOCKER_HOST environment variable, parsing
 // out any scheme or ports so that only the IP address is returned.
@@ -94,4 +100,18 @@ func PrintMetrics(m []telegraf.Metric) {
 		panic(err)
 	}
 	fmt.Println(string(buf))
+}
+
+// DefaultSampleConfig returns the sample config with the default parameters
+// uncommented to also be able to test the validity of default setting.
+func DefaultSampleConfig(sampleConfig string) []byte {
+	re := regexp.MustCompile(`(?m)(^\s+)#\s*`)
+	return []byte(re.ReplaceAllString(sampleConfig, "$1"))
+}
+
+func WithinDefaultDelta(dt float64) bool {
+	if dt < -DefaultDelta || dt > DefaultDelta {
+		return false
+	}
+	return true
 }

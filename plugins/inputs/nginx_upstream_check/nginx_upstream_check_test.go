@@ -6,8 +6,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/testutil"
 )
 
 const sampleStatusResponse = `
@@ -38,25 +39,27 @@ const sampleStatusResponse = `
       }
     ]
   }
-}
-`
+}`
 
 func TestNginxUpstreamCheckData(test *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		var response string
+		if request.URL.Path != "/status" {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Errorf("Cannot handle request, expected: %q, actual: %q", "/status", request.URL.Path)
+			return
+		}
 
-		require.Equal(test, request.URL.Path, "/status", "Cannot handle request")
-
-		response = sampleStatusResponse
 		responseWriter.Header()["Content-Type"] = []string{"application/json"}
-
-		_, err := fmt.Fprintln(responseWriter, response)
-		require.NoError(test, err)
+		if _, err := fmt.Fprintln(responseWriter, sampleStatusResponse); err != nil {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Error(err)
+			return
+		}
 	}))
 	defer testServer.Close()
 
-	check := NewNginxUpstreamCheck()
-	check.URL = fmt.Sprintf("%s/status", testServer.URL)
+	check := newNginxUpstreamCheck()
+	check.URL = testServer.URL + "/status"
 
 	var accumulator testutil.Accumulator
 
@@ -67,58 +70,77 @@ func TestNginxUpstreamCheckData(test *testing.T) {
 		test,
 		"nginx_upstream_check",
 		map[string]interface{}{
-			"status":      string("up"),
+			"status":      "up",
 			"status_code": uint8(1),
 			"rise":        uint64(1000),
 			"fall":        uint64(0),
 		},
 		map[string]string{
-			"upstream": string("upstream-1"),
-			"type":     string("http"),
-			"name":     string("127.0.0.1:8081"),
-			"port":     string("0"),
-			"url":      fmt.Sprintf("%s/status", testServer.URL),
+			"upstream": "upstream-1",
+			"type":     "http",
+			"name":     "127.0.0.1:8081",
+			"port":     "0",
+			"url":      testServer.URL + "/status",
 		})
 
 	accumulator.AssertContainsTaggedFields(
 		test,
 		"nginx_upstream_check",
 		map[string]interface{}{
-			"status":      string("down"),
+			"status":      "down",
 			"status_code": uint8(2),
 			"rise":        uint64(0),
 			"fall":        uint64(2000),
 		},
 		map[string]string{
-			"upstream": string("upstream-2"),
-			"type":     string("tcp"),
-			"name":     string("127.0.0.1:8082"),
-			"port":     string("8080"),
-			"url":      fmt.Sprintf("%s/status", testServer.URL),
+			"upstream": "upstream-2",
+			"type":     "tcp",
+			"name":     "127.0.0.1:8082",
+			"port":     "8080",
+			"url":      testServer.URL + "/status",
 		})
 }
 
 func TestNginxUpstreamCheckRequest(test *testing.T) {
 	testServer := httptest.NewServer(http.HandlerFunc(func(responseWriter http.ResponseWriter, request *http.Request) {
-		var response string
+		if request.URL.Path != "/status" {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Errorf("Cannot handle request, expected: %q, actual: %q", "/status", request.URL.Path)
+			return
+		}
 
-		require.Equal(test, request.URL.Path, "/status", "Cannot handle request")
-
-		response = sampleStatusResponse
 		responseWriter.Header()["Content-Type"] = []string{"application/json"}
+		if _, err := fmt.Fprintln(responseWriter, sampleStatusResponse); err != nil {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Error(err)
+			return
+		}
 
-		_, err := fmt.Fprintln(responseWriter, response)
-		require.NoError(test, err)
-
-		require.Equal(test, request.Method, "POST")
-		require.Equal(test, request.Header.Get("X-Test"), "test-value")
-		require.Equal(test, request.Header.Get("Authorization"), "Basic dXNlcjpwYXNzd29yZA==")
-		require.Equal(test, request.Host, "status.local")
+		if request.Method != "POST" {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Errorf("Not equal, expected: %q, actual: %q", "POST", request.Method)
+			return
+		}
+		if request.Header.Get("X-Test") != "test-value" {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Errorf("Not equal, expected: %q, actual: %q", "test-value", request.Header.Get("X-Test"))
+			return
+		}
+		if request.Header.Get("Authorization") != "Basic dXNlcjpwYXNzd29yZA==" {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Errorf("Not equal, expected: %q, actual: %q", "Basic dXNlcjpwYXNzd29yZA==", request.Header.Get("Authorization"))
+			return
+		}
+		if request.Host != "status.local" {
+			responseWriter.WriteHeader(http.StatusInternalServerError)
+			test.Errorf("Not equal, expected: %q, actual: %q", "status.local", request.Host)
+			return
+		}
 	}))
 	defer testServer.Close()
 
-	check := NewNginxUpstreamCheck()
-	check.URL = fmt.Sprintf("%s/status", testServer.URL)
+	check := newNginxUpstreamCheck()
+	check.URL = testServer.URL + "/status"
 	check.Headers["X-test"] = "test-value"
 	check.HostHeader = "status.local"
 	check.Username = "user"

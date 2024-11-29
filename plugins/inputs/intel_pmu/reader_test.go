@@ -3,6 +3,7 @@
 package intel_pmu
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"testing"
@@ -50,7 +51,7 @@ func TestReadCoreEvents(t *testing.T) {
 	})
 
 	t.Run("nil events", func(t *testing.T) {
-		entity := &CoreEventEntity{}
+		entity := &coreEventEntity{}
 
 		entity.activeEvents = append(entity.activeEvents, nil)
 		metrics, err := mEntitiesReader.readCoreEvents(entity)
@@ -61,10 +62,10 @@ func TestReadCoreEvents(t *testing.T) {
 	})
 
 	t.Run("reading failed", func(t *testing.T) {
-		errMock := fmt.Errorf("mock error")
+		errMock := errors.New("mock error")
 		event := &ia.ActiveEvent{PerfEvent: &ia.PerfEvent{Name: "event1"}}
 
-		entity := &CoreEventEntity{}
+		entity := &coreEventEntity{}
 
 		entity.activeEvents = append(entity.activeEvents, event)
 		mReader.On("readValue", event).Return(ia.CounterValue{}, errMock).Once()
@@ -78,7 +79,7 @@ func TestReadCoreEvents(t *testing.T) {
 	})
 
 	t.Run("read active events values", func(t *testing.T) {
-		entity := &CoreEventEntity{}
+		entity := &coreEventEntity{}
 		var expected []coreMetric
 
 		tEvents := []eventWithValues{
@@ -138,7 +139,7 @@ func TestReadMultiEventSeparately(t *testing.T) {
 	})
 
 	t.Run("reading failed", func(t *testing.T) {
-		errMock := fmt.Errorf("mock error")
+		errMock := errors.New("mock error")
 		perfEvent := &ia.PerfEvent{Name: "event"}
 
 		event := &ia.ActiveEvent{PerfEvent: perfEvent}
@@ -190,7 +191,7 @@ func TestReadMultiEventAgg(t *testing.T) {
 	mReader := &mockValuesReader{}
 	mTimer := &moonClock{}
 	mEntitiesReader := &iaEntitiesValuesReader{mReader, mTimer}
-	errMock := fmt.Errorf("mock error")
+	errMock := errors.New("mock error")
 
 	t.Run("event reader is nil", func(t *testing.T) {
 		event := multiEvent{}
@@ -294,7 +295,7 @@ func TestReadMultiEventAgg(t *testing.T) {
 }
 
 func TestReadUncoreEvents(t *testing.T) {
-	errMock := fmt.Errorf("mock error")
+	errMock := errors.New("mock error")
 
 	t.Run("entity is nil", func(t *testing.T) {
 		metrics, err := (&iaEntitiesValuesReader{}).readUncoreEvents(nil)
@@ -345,7 +346,7 @@ func TestReadUncoreEvents(t *testing.T) {
 			time:     mTimer.now(),
 		}
 		expected := []uncoreMetric{newMetric, newMetric2}
-		entityAgg := &UncoreEventEntity{Aggregate: true, activeMultiEvents: []multiEvent{multi, multi2}}
+		entityAgg := &uncoreEventEntity{Aggregate: true, activeMultiEvents: []multiEvent{multi, multi2}}
 
 		metrics, err := mEntitiesReader.readUncoreEvents(entityAgg)
 
@@ -359,7 +360,7 @@ func TestReadUncoreEvents(t *testing.T) {
 
 			mReader.On("readValue", event).Return(ia.CounterValue{}, errMock).Once()
 
-			entityAgg := &UncoreEventEntity{Aggregate: true, activeMultiEvents: []multiEvent{multi}}
+			entityAgg := &uncoreEventEntity{Aggregate: true, activeMultiEvents: []multiEvent{multi}}
 			metrics, err = mEntitiesReader.readUncoreEvents(entityAgg)
 
 			require.Error(t, err)
@@ -415,7 +416,7 @@ func TestReadUncoreEvents(t *testing.T) {
 			}
 			expected = append(expected, newMetric)
 		}
-		entity := &UncoreEventEntity{activeMultiEvents: []multiEvent{multi, multi2}}
+		entity := &uncoreEventEntity{activeMultiEvents: []multiEvent{multi, multi2}}
 
 		metrics, err := mEntitiesReader.readUncoreEvents(entity)
 
@@ -429,7 +430,7 @@ func TestReadUncoreEvents(t *testing.T) {
 
 			mReader.On("readValue", event).Return(ia.CounterValue{}, errMock).Once()
 
-			entityAgg := &UncoreEventEntity{activeMultiEvents: []multiEvent{multi}}
+			entityAgg := &uncoreEventEntity{activeMultiEvents: []multiEvent{multi}}
 			metrics, err = mEntitiesReader.readUncoreEvents(entityAgg)
 
 			require.Error(t, err)
@@ -476,9 +477,9 @@ func TestReadEntities(t *testing.T) {
 			time:     mTimer.now(),
 		}
 
-		coreEntities := []*CoreEventEntity{{activeEvents: activeCoreEvent}, {activeEvents: activeCoreEvent2}}
+		coreEntities := []*coreEventEntity{{activeEvents: activeCoreEvent}, {activeEvents: activeCoreEvent2}}
 
-		uncoreEntities := []*UncoreEventEntity{
+		uncoreEntities := []*uncoreEventEntity{
 			{activeMultiEvents: []multiEvent{{activeEvents: activeUncoreEvent, perfEvent: uncorePerfEvent, socket: socket}}},
 			{activeMultiEvents: []multiEvent{{activeEvents: activeUncoreEvent2, perfEvent: uncorePerfEvent2, socket: socket}}},
 		}
@@ -500,7 +501,7 @@ func TestReadEntities(t *testing.T) {
 	})
 
 	t.Run("core entity reading failed", func(t *testing.T) {
-		coreEntities := []*CoreEventEntity{nil}
+		coreEntities := []*coreEventEntity{nil}
 		coreMetrics, uncoreMetrics, err := mEntitiesReader.readEntities(coreEntities, nil)
 
 		require.Error(t, err)
@@ -510,7 +511,7 @@ func TestReadEntities(t *testing.T) {
 	})
 
 	t.Run("uncore entity reading failed", func(t *testing.T) {
-		uncoreEntities := []*UncoreEventEntity{nil}
+		uncoreEntities := []*uncoreEventEntity{nil}
 		coreMetrics, uncoreMetrics, err := mEntitiesReader.readEntities(nil, uncoreEntities)
 
 		require.Error(t, err)

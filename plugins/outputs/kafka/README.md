@@ -1,7 +1,12 @@
 # Kafka Output Plugin
 
-This plugin writes to a [Kafka
-Broker](http://kafka.apache.org/07/quickstart.html) acting a Kafka Producer.
+This plugin writes metrics to a [Kafka Broker][kafka] acting a Kafka Producer.
+
+⭐ Telegraf v0.1.7
+🏷️ messaging
+💻 all
+
+[kafka]: http://kafka.apache.org
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -11,6 +16,20 @@ modify metrics, tags, and field or create aliases and configure ordering, etc.
 See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Startup error behavior options <!-- @/docs/includes/startup_error_behavior.md -->
+
+In addition to the plugin-specific and global configuration settings the plugin
+supports options for specifying the behavior when experiencing startup errors
+using the `startup_error_behavior` setting. Available values are:
+
+- `error`:  Telegraf with stop and exit in case of startup errors. This is the
+            default behavior.
+- `ignore`: Telegraf will ignore startup errors for this plugin and disables it
+            but continues processing for all other plugins.
+- `retry`:  Telegraf will try to startup the plugin in every gather or write
+            cycle in case of startup errors. The plugin is disabled until
+            the startup succeeds.
 
 ## Secret-store support
 
@@ -53,7 +72,7 @@ to use them.
 
   ## The routing tag specifies a tagkey on the metric whose value is used as
   ## the message key.  The message key is used to determine which partition to
-  ## send the message to.  This tag is prefered over the routing_key option.
+  ## send the message to.  This tag is preferred over the routing_key option.
   routing_tag = "host"
 
   ## The routing key is set as the message key and used to determine which
@@ -107,6 +126,15 @@ to use them.
   ## smaller than the broker's 'message.max.bytes'.
   # max_message_bytes = 1000000
 
+  ## Producer timestamp
+  ## This option sets the timestamp of the kafka producer message, choose from:
+  ##   * metric: Uses the metric's timestamp
+  ##   * now: Uses the time of write
+  # producer_timestamp = metric
+
+  ## Add metric name as specified kafka header if not empty
+  # metric_name_header = ""
+
   ## Optional TLS Config
   # enable_tls = false
   # tls_ca = "/etc/telegraf/ca.pem"
@@ -155,6 +183,25 @@ to use them.
 
   # Disable Kafka metadata full fetch
   # metadata_full = false
+
+  ## Maximum number of retries for metadata operations including
+  ## connecting. Sets Sarama library's Metadata.Retry.Max config value. If 0 or
+  ## unset, use the Sarama default of 3,
+  # metadata_retry_max = 0
+
+  ## Type of retry backoff. Valid options: "constant", "exponential"
+  # metadata_retry_type = "constant"
+
+  ## Amount of time to wait before retrying. When metadata_retry_type is
+  ## "constant", each retry is delayed this amount. When "exponential", the
+  ## first retry is delayed this amount, and subsequent delays are doubled. If 0
+  ## or unset, use the Sarama default of 250 ms
+  # metadata_retry_backoff = 0
+
+  ## Maximum amount of time to wait before retrying when metadata_retry_type is
+  ## "exponential". Ignored for other retry types. If 0, there is no backoff
+  ## limit.
+  # metadata_retry_max_duration = 0
 
   ## Data format to output.
   ## Each data format has its own unique set of configuration options, read

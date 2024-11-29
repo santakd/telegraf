@@ -7,16 +7,20 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func TestRiak(t *testing.T) {
 	// Create a test server with the const response JSON
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := fmt.Fprintln(w, response); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-		_, err := fmt.Fprintln(w, response)
-		require.NoError(t, err)
 	}))
 	defer ts.Close()
 

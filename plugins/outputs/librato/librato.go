@@ -26,7 +26,7 @@ type Librato struct {
 	APIUser   config.Secret   `toml:"api_user"`
 	APIToken  config.Secret   `toml:"api_token"`
 	Debug     bool            `toml:"debug"`
-	SourceTag string          `toml:"source_tag" deprecated:"1.0.0;use 'template' instead"`
+	SourceTag string          `toml:"source_tag" deprecated:"1.0.0;1.35.0;use 'template' instead"`
 	Timeout   config.Duration `toml:"timeout"`
 	Template  string          `toml:"template"`
 	Log       telegraf.Logger `toml:"-"`
@@ -38,12 +38,12 @@ type Librato struct {
 // https://www.librato.com/docs/kb/faq/best_practices/naming_convention_metrics_sources.html#naming-limitations-for-sources-and-metrics
 var reUnacceptedChar = regexp.MustCompile("[^.a-zA-Z0-9_-]")
 
-// LMetrics is the default struct for Librato's API fromat
+// LMetrics is the default struct for Librato's API format
 type LMetrics struct {
 	Gauges []*Gauge `json:"gauges"`
 }
 
-// Gauge is the gauge format for Librato's API fromat
+// Gauge is the gauge format for Librato's API format
 type Gauge struct {
 	Name        string  `json:"name"`
 	Value       float64 `json:"value"`
@@ -91,8 +91,7 @@ func (l *Librato) Write(metrics []telegraf.Metric) error {
 		l.Template = l.SourceTag
 	}
 
-	tempGauges := []*Gauge{}
-
+	var tempGauges []*Gauge
 	for _, m := range metrics {
 		if gauges, err := l.buildGauges(m); err == nil {
 			for _, gauge := range gauges {
@@ -106,7 +105,7 @@ func (l *Librato) Write(metrics []telegraf.Metric) error {
 	}
 
 	metricCounter := len(tempGauges)
-	// make sur we send a batch of maximum 300
+	// make sure we send a batch of maximum 300
 	sizeBatch := 300
 	for start := 0; start < metricCounter; start += sizeBatch {
 		err := l.writeBatch(start, sizeBatch, metricCounter, tempGauges)
@@ -118,7 +117,7 @@ func (l *Librato) Write(metrics []telegraf.Metric) error {
 	return nil
 }
 
-func (l *Librato) writeBatch(start int, sizeBatch int, metricCounter int, tempGauges []*Gauge) error {
+func (l *Librato) writeBatch(start, sizeBatch, metricCounter int, tempGauges []*Gauge) error {
 	lmetrics := LMetrics{}
 	end := start + sizeBatch
 	if end > metricCounter {
@@ -149,12 +148,12 @@ func (l *Librato) writeBatch(start int, sizeBatch int, metricCounter int, tempGa
 	}
 	token, err := l.APIToken.Get()
 	if err != nil {
-		config.ReleaseSecret(user)
+		user.Destroy()
 		return fmt.Errorf("getting token failed: %w", err)
 	}
-	req.SetBasicAuth(string(user), string(token))
-	config.ReleaseSecret(user)
-	config.ReleaseSecret(token)
+	req.SetBasicAuth(user.String(), token.String())
+	user.Destroy()
+	token.Destroy()
 
 	resp, err := l.client.Do(req)
 	if err != nil {
@@ -180,17 +179,16 @@ func (l *Librato) writeBatch(start int, sizeBatch int, metricCounter int, tempGa
 }
 
 func (l *Librato) buildGauges(m telegraf.Metric) ([]*Gauge, error) {
-	gauges := []*Gauge{}
 	if m.Time().Unix() == 0 {
-		return gauges, fmt.Errorf("time was zero %s", m.Name())
+		return nil, fmt.Errorf("time was zero %s", m.Name())
 	}
-	metricSource := graphite.InsertField(
-		graphite.SerializeBucketName("", m.Tags(), l.Template, ""),
-		"value")
+
+	metricSource := graphite.InsertField(graphite.SerializeBucketName("", m.Tags(), l.Template, ""), "value")
 	if metricSource == "" {
-		return gauges,
-			fmt.Errorf("undeterminable Source type from Field, %s", l.Template)
+		return nil, fmt.Errorf("undeterminable Source type from Field, %s", l.Template)
 	}
+
+	gauges := make([]*Gauge, 0, len(m.Fields()))
 	for fieldName, value := range m.Fields() {
 		metricName := m.Name()
 		if fieldName != "value" {
@@ -206,7 +204,7 @@ func (l *Librato) buildGauges(m telegraf.Metric) ([]*Gauge, error) {
 			continue
 		}
 		if err := gauge.setValue(value); err != nil {
-			return gauges, fmt.Errorf("unable to extract value from Fields: %w", err)
+			return nil, fmt.Errorf("unable to extract value from Fields: %w", err)
 		}
 		gauges = append(gauges, gauge)
 	}

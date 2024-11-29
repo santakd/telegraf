@@ -107,7 +107,7 @@ func (a *YandexCloudMonitoring) Connect() error {
 
 	a.Log.Infof("Writing to Yandex.Cloud Monitoring URL: %s", a.EndpointURL)
 
-	tags := map[string]string{}
+	tags := make(map[string]string)
 	a.MetricOutsideWindow = selfstat.Register("yandex_cloud_monitoring", "metric_outside_window", tags)
 
 	return nil
@@ -135,7 +135,7 @@ func (a *YandexCloudMonitoring) Write(metrics []telegraf.Metric) error {
 				yandexCloudMonitoringMetric{
 					Name:   field.Key,
 					Labels: m.Tags(),
-					TS:     fmt.Sprint(m.Time().Format(time.RFC3339)),
+					TS:     m.Time().Format(time.RFC3339),
 					Value:  value,
 				},
 			)

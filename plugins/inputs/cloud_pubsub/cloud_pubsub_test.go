@@ -5,7 +5,6 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf/internal"
@@ -30,7 +29,8 @@ func TestRunParse(t *testing.T) {
 	}
 	sub.receiver = testMessagesReceive(sub)
 
-	decoder, _ := internal.NewContentDecoder("identity")
+	decoder, err := internal.NewContentDecoder("identity")
+	require.NoError(t, err)
 
 	ps := &PubSub{
 		Log:                    testutil.Logger{},
@@ -57,7 +57,7 @@ func TestRunParse(t *testing.T) {
 	sub.messages <- msg
 
 	acc.Wait(1)
-	require.Equal(t, acc.NFields(), 1)
+	require.Equal(t, 1, acc.NFields())
 	metric := acc.Metrics[0]
 	validateTestInfluxMetric(t, metric)
 }
@@ -75,7 +75,8 @@ func TestRunBase64(t *testing.T) {
 	}
 	sub.receiver = testMessagesReceive(sub)
 
-	decoder, _ := internal.NewContentDecoder("identity")
+	decoder, err := internal.NewContentDecoder("identity")
+	require.NoError(t, err)
 
 	ps := &PubSub{
 		Log:                    testutil.Logger{},
@@ -103,7 +104,7 @@ func TestRunBase64(t *testing.T) {
 	sub.messages <- msg
 
 	acc.Wait(1)
-	require.Equal(t, acc.NFields(), 1)
+	require.Equal(t, 1, acc.NFields())
 	metric := acc.Metrics[0]
 	validateTestInfluxMetric(t, metric)
 }
@@ -152,7 +153,7 @@ func TestRunGzipDecode(t *testing.T) {
 	}
 	sub.messages <- msg
 	acc.Wait(1)
-	assert.Equal(t, acc.NFields(), 1)
+	require.Equal(t, 1, acc.NFields())
 	metric := acc.Metrics[0]
 	validateTestInfluxMetric(t, metric)
 }
@@ -199,9 +200,9 @@ func TestRunInvalidMessages(t *testing.T) {
 	acc.WaitError(1)
 
 	// Make sure we acknowledged message so we don't receive it again.
-	testTracker.WaitForAck(1)
+	testTracker.waitForAck(1)
 
-	require.Equal(t, acc.NFields(), 0)
+	require.Equal(t, 0, acc.NFields())
 }
 
 func TestRunOverlongMessages(t *testing.T) {
@@ -248,9 +249,9 @@ func TestRunOverlongMessages(t *testing.T) {
 	acc.WaitError(1)
 
 	// Make sure we acknowledged message so we don't receive it again.
-	testTracker.WaitForAck(1)
+	testTracker.waitForAck(1)
 
-	require.Equal(t, acc.NFields(), 0)
+	require.Equal(t, 0, acc.NFields())
 }
 
 func TestRunErrorInSubscriber(t *testing.T) {
@@ -294,6 +295,6 @@ func TestRunErrorInSubscriber(t *testing.T) {
 func validateTestInfluxMetric(t *testing.T, m *testutil.Metric) {
 	require.Equal(t, "cpu_load_short", m.Measurement)
 	require.Equal(t, "server01", m.Tags["host"])
-	require.Equal(t, 23422.0, m.Fields["value"])
+	require.InDelta(t, 23422.0, m.Fields["value"], testutil.DefaultDelta)
 	require.Equal(t, int64(1422568543702900257), m.Time.UnixNano())
 }

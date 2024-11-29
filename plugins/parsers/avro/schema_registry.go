@@ -4,10 +4,12 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/linkedin/goavro/v2"
@@ -24,11 +26,12 @@ type schemaRegistry struct {
 	password string
 	cache    map[int]*schemaAndCodec
 	client   *http.Client
+	mu       sync.RWMutex
 }
 
 const schemaByID = "%s/schemas/ids/%d"
 
-func newSchemaRegistry(addr string, caCertPath string) (*schemaRegistry, error) {
+func newSchemaRegistry(addr, caCertPath string) (*schemaRegistry, error) {
 	var client *http.Client
 	var tlsCfg *tls.Config
 	if caCertPath != "" {
@@ -72,8 +75,20 @@ func newSchemaRegistry(addr string, caCertPath string) (*schemaRegistry, error) 
 	return registry, nil
 }
 
-func (sr *schemaRegistry) getSchemaAndCodec(id int) (*schemaAndCodec, error) {
+// Helper function to make managing lock easier
+func (sr *schemaRegistry) getSchemaAndCodecFromCache(id int) (*schemaAndCodec, error) {
+	// Read-lock the cache map before access.
+	sr.mu.RLock()
+	defer sr.mu.RUnlock()
 	if v, ok := sr.cache[id]; ok {
+		return v, nil
+	}
+	return nil, fmt.Errorf("schema %d not in cache", id)
+}
+
+func (sr *schemaRegistry) getSchemaAndCodec(id int) (*schemaAndCodec, error) {
+	v, err := sr.getSchemaAndCodecFromCache(id)
+	if err == nil {
 		return v, nil
 	}
 
@@ -99,18 +114,21 @@ func (sr *schemaRegistry) getSchemaAndCodec(id int) (*schemaAndCodec, error) {
 
 	schema, ok := jsonResponse["schema"]
 	if !ok {
-		return nil, fmt.Errorf("malformed respose from schema registry: no 'schema' key")
+		return nil, errors.New("malformed response from schema registry: no 'schema' key")
 	}
 
 	schemaValue, ok := schema.(string)
 	if !ok {
-		return nil, fmt.Errorf("malformed respose from schema registry: %v cannot be cast to string", schema)
+		return nil, fmt.Errorf("malformed response from schema registry: %v cannot be cast to string", schema)
 	}
 	codec, err := goavro.NewCodec(schemaValue)
 	if err != nil {
 		return nil, err
 	}
 	retval := &schemaAndCodec{Schema: schemaValue, Codec: codec}
+	// Lock the cache map before update.
+	sr.mu.Lock()
+	defer sr.mu.Unlock()
 	sr.cache[id] = retval
 	return retval, nil
 }

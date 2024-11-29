@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func createTempFile(t *testing.T, dir string, pattern string, data []byte) (*os.File, os.FileInfo) {
+func createTempFile(t *testing.T, dir, pattern string, data []byte) (*os.File, os.FileInfo) {
 	tempFile, err := os.CreateTemp(dir, pattern)
 	if err != nil {
 		t.Fatalf("error creating a temporary file %v: %v", tempFile.Name(), err)
@@ -276,6 +276,7 @@ func TestGather(t *testing.T) {
 		guid     string
 		content  []byte
 		numaNode string
+		pciBdf   string
 	}
 	tests := []struct {
 		name     string
@@ -347,7 +348,7 @@ func TestGather(t *testing.T) {
 				},
 			},
 			files: []testFile{
-				{guid: "test-guid", content: []byte{}},
+				{guid: "test-guid"},
 			},
 			wantErr: true,
 		},
@@ -449,6 +450,7 @@ func TestGather(t *testing.T) {
 					map[string]string{
 						"guid":           "test-guid",
 						"numa_node":      "0",
+						"pci_bdf":        "0000:00:0a.0",
 						"sample_name":    "test-sample",
 						"sample_group":   "test-group",
 						"datatype_idref": "test-datatype",
@@ -464,6 +466,7 @@ func TestGather(t *testing.T) {
 					map[string]string{
 						"guid":           "test-guid2",
 						"numa_node":      "1",
+						"pci_bdf":        "0001:00:0a.0",
 						"sample_name":    "test-sample2",
 						"sample_group":   "test-group2",
 						"datatype_idref": "test-datatype2",
@@ -475,8 +478,8 @@ func TestGather(t *testing.T) {
 				),
 			},
 			files: []testFile{
-				{guid: "test-guid", content: []byte{0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, numaNode: "0"},
-				{guid: "test-guid2", content: []byte{0x30, 0x5c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, numaNode: "1"},
+				{guid: "test-guid", content: []byte{0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, numaNode: "0", pciBdf: "0000:00:0a.0"},
+				{guid: "test-guid2", content: []byte{0x30, 0x5c, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, numaNode: "1", pciBdf: "0001:00:0a.0"},
 			},
 			wantErr: false,
 		},
@@ -537,6 +540,7 @@ func TestGather(t *testing.T) {
 					map[string]string{
 						"guid":           "test-guid",
 						"numa_node":      "0",
+						"pci_bdf":        "0000:00:0a.0",
 						"sample_name":    "test-sample",
 						"sample_group":   "test-group",
 						"datatype_idref": "test-datatype",
@@ -549,7 +553,7 @@ func TestGather(t *testing.T) {
 				),
 			},
 			files: []testFile{
-				{guid: "test-guid", content: []byte{0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, numaNode: "0"},
+				{guid: "test-guid", content: []byte{0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, numaNode: "0", pciBdf: "0000:00:0a.0"},
 			},
 			wantErr: false,
 		},
@@ -572,6 +576,7 @@ func TestGather(t *testing.T) {
 				telemetryFiles[file.guid] = append(telemetryFiles[file.guid], fileInfo{
 					path:     testFile.Name(),
 					numaNode: file.numaNode,
+					pciBdf:   file.pciBdf,
 				})
 			}
 			p.pmtTelemetryFiles = telemetryFiles

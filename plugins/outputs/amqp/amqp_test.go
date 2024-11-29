@@ -4,22 +4,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf/config"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/config"
 )
 
 type MockClient struct {
-	PublishF func(key string, body []byte) error
+	PublishF func() error
 	CloseF   func() error
 
 	PublishCallCount int
 	CloseCallCount   int
 }
 
-func (c *MockClient) Publish(key string, body []byte) error {
+func (c *MockClient) Publish(string, []byte) error {
 	c.PublishCallCount++
-	return c.PublishF(key, body)
+	return c.PublishF()
 }
 
 func (c *MockClient) Close() error {
@@ -29,7 +30,7 @@ func (c *MockClient) Close() error {
 
 func NewMockClient() Client {
 	return &MockClient{
-		PublishF: func(key string, body []byte) error {
+		PublishF: func() error {
 			return nil
 		},
 		CloseF: func() error {
@@ -51,9 +52,11 @@ func TestConnect(t *testing.T) {
 				ExchangeType:       DefaultExchangeType,
 				ExchangeDurability: "durable",
 				AuthMethod:         DefaultAuthMethod,
-				Database:           DefaultDatabase,
-				RetentionPolicy:    DefaultRetentionPolicy,
-				Timeout:            config.Duration(time.Second * 5),
+				Headers: map[string]string{
+					"database":         DefaultDatabase,
+					"retention_policy": DefaultRetentionPolicy,
+				},
+				Timeout: config.Duration(time.Second * 5),
 				connect: func(_ *ClientConfig) (Client, error) {
 					return NewMockClient(), nil
 				},
@@ -63,8 +66,8 @@ func TestConnect(t *testing.T) {
 				require.Equal(t, []string{DefaultURL}, cfg.brokers)
 				require.Equal(t, "", cfg.exchange)
 				require.Equal(t, "topic", cfg.exchangeType)
-				require.Equal(t, false, cfg.exchangePassive)
-				require.Equal(t, true, cfg.exchangeDurable)
+				require.False(t, cfg.exchangePassive)
+				require.True(t, cfg.exchangeDurable)
 				require.Equal(t, amqp.Table(nil), cfg.exchangeArguments)
 				require.Equal(t, amqp.Table{
 					"database":         DefaultDatabase,
@@ -149,6 +152,7 @@ func TestConnect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			require.NoError(t, tt.output.Init())
 			err := tt.output.Connect()
 			tt.errFunc(t, tt.output, err)
 		})

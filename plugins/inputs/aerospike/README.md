@@ -1,15 +1,32 @@
 # Aerospike Input Plugin
 
-The aerospike plugin queries aerospike server(s) and get node statistics & stats
-for all the configured namespaces.
+This plugin queries [Aerospike][aerospike] server(s) for node statistics and
+statistics on all configured namespaces.
 
-For what the measurements mean, please consult the [Aerospike Metrics Reference
-Docs](http://www.aerospike.com/docs/reference/metrics).
+> [!CAUTION]
+> As of version 1.30 the Aerospike plugin has been deprecated in favor of the
+> [prometheus plugin](/plugins/inputs/prometheus/README.md) and the officially
+> supported [Aerospike Prometheus Exporter][prometheus_exporter]
 
-The metric names, to make it less complicated in querying, have replaced all `-`
-with `_` as Aerospike metrics come in both forms (no idea why).
+For details on the measurements mean, please consult the
+[Aerospike Metrics Reference Docs][ref_manual].
 
-All metrics are attempted to be cast to integers, then booleans, then strings.
+> [!NOTE]
+> Metric names will have dashes (`-`) replaced as underscores (`_`) to make
+> querying more consistently and easy.
+
+All metrics are attempted to be cast to integers, then booleans, then strings
+in order.
+
+⭐ Telegraf v0.2.0
+🚩 Telegraf v1.30.0
+🔥 Telegraf v1.40.0
+🏷️ server
+💻 all
+
+[aerospike]: https://www.aerospike.com
+[prometheus_exporter]: https://aerospike.com/docs/monitorstack/configure/configure-exporter
+[ref_manual]: https://www.aerospike.com/docs/reference/metrics
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 

@@ -44,26 +44,22 @@ func TestSnakeCase(t *testing.T) {
 	}
 }
 
-var (
-	sleepbin, _ = exec.LookPath("sleep")
-	echobin, _  = exec.LookPath("echo")
-	shell, _    = exec.LookPath("sh")
-)
-
 func TestRunTimeout(t *testing.T) {
 	t.Skip("Skipping test due to random failures & a data race when running test-all.")
 
-	if sleepbin == "" {
+	sleepbin, err := exec.LookPath("sleep")
+	if err != nil || sleepbin == "" {
 		t.Skip("'sleep' binary not available on OS, skipping.")
 	}
+
 	cmd := exec.Command(sleepbin, "10")
 	start := time.Now()
-	err := RunTimeout(cmd, time.Millisecond*20)
+	err = RunTimeout(cmd, time.Millisecond*20)
 	elapsed := time.Since(start)
 
 	require.Equal(t, ErrTimeout, err)
 	// Verify that command gets killed in 20ms, with some breathing room
-	require.True(t, elapsed < time.Millisecond*75)
+	require.Less(t, elapsed, time.Millisecond*75)
 }
 
 // Verifies behavior of a command that doesn't get killed.
@@ -71,19 +67,20 @@ func TestRunTimeoutFastExit(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping test due to random failures.")
 	}
-	if echobin == "" {
+	echobin, err := exec.LookPath("echo")
+	if err != nil || echobin == "" {
 		t.Skip("'echo' binary not available on OS, skipping.")
 	}
 	cmd := exec.Command(echobin)
 	start := time.Now()
-	err := RunTimeout(cmd, time.Millisecond*20)
+	err = RunTimeout(cmd, time.Millisecond*20)
 	buf := &bytes.Buffer{}
 	log.SetOutput(buf)
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
 	// Verify that command gets killed in 20ms, with some breathing room
-	require.True(t, elapsed < time.Millisecond*75)
+	require.Less(t, elapsed, time.Millisecond*75)
 
 	// Verify "process already finished" log doesn't occur.
 	time.Sleep(time.Millisecond * 75)
@@ -93,21 +90,23 @@ func TestRunTimeoutFastExit(t *testing.T) {
 func TestCombinedOutputTimeout(t *testing.T) {
 	// TODO: Fix this test
 	t.Skip("Test failing too often, skip for now and revisit later.")
-	if sleepbin == "" {
+	sleepbin, err := exec.LookPath("sleep")
+	if err != nil || sleepbin == "" {
 		t.Skip("'sleep' binary not available on OS, skipping.")
 	}
 	cmd := exec.Command(sleepbin, "10")
 	start := time.Now()
-	_, err := CombinedOutputTimeout(cmd, time.Millisecond*20)
+	_, err = CombinedOutputTimeout(cmd, time.Millisecond*20)
 	elapsed := time.Since(start)
 
 	require.Equal(t, ErrTimeout, err)
 	// Verify that command gets killed in 20ms, with some breathing room
-	require.True(t, elapsed < time.Millisecond*75)
+	require.Less(t, elapsed, time.Millisecond*75)
 }
 
 func TestCombinedOutput(t *testing.T) {
-	if echobin == "" {
+	echobin, err := exec.LookPath("echo")
+	if err != nil || echobin == "" {
 		t.Skip("'echo' binary not available on OS, skipping.")
 	}
 	cmd := exec.Command(echobin, "foo")
@@ -120,7 +119,8 @@ func TestCombinedOutput(t *testing.T) {
 // test that CombinedOutputTimeout and exec.Cmd.CombinedOutput return
 // the same output from a failed command.
 func TestCombinedOutputError(t *testing.T) {
-	if shell == "" {
+	shell, err := exec.LookPath("sh")
+	if err != nil || shell == "" {
 		t.Skip("'sh' binary not available on OS, skipping.")
 	}
 	cmd := exec.Command(shell, "-c", "false")
@@ -135,11 +135,12 @@ func TestCombinedOutputError(t *testing.T) {
 }
 
 func TestRunError(t *testing.T) {
-	if shell == "" {
+	shell, err := exec.LookPath("sh")
+	if err != nil || shell == "" {
 		t.Skip("'sh' binary not available on OS, skipping.")
 	}
 	cmd := exec.Command(shell, "-c", "false")
-	err := RunTimeout(cmd, time.Second)
+	err = RunTimeout(cmd, time.Second)
 
 	require.Error(t, err)
 }
@@ -151,13 +152,13 @@ func TestRandomSleep(t *testing.T) {
 	s := time.Now()
 	RandomSleep(time.Duration(0), make(chan struct{}))
 	elapsed := time.Since(s)
-	require.True(t, elapsed < time.Millisecond)
+	require.Less(t, elapsed, time.Millisecond)
 
 	// test that max sleep is respected
 	s = time.Now()
 	RandomSleep(time.Millisecond*50, make(chan struct{}))
 	elapsed = time.Since(s)
-	require.True(t, elapsed < time.Millisecond*100)
+	require.Less(t, elapsed, time.Millisecond*100)
 
 	// test that shutdown is respected
 	s = time.Now()
@@ -168,12 +169,12 @@ func TestRandomSleep(t *testing.T) {
 	}()
 	RandomSleep(time.Second, shutdown)
 	elapsed = time.Since(s)
-	require.True(t, elapsed < time.Millisecond*150)
+	require.Less(t, elapsed, time.Millisecond*150)
 }
 
 func TestCompressWithGzip(t *testing.T) {
 	testData := "the quick brown fox jumps over the lazy dog"
-	inputBuffer := bytes.NewBuffer([]byte(testData))
+	inputBuffer := bytes.NewBufferString(testData)
 
 	outputBuffer := CompressWithGzip(inputBuffer)
 	gzipReader, err := gzip.NewReader(outputBuffer)
@@ -233,7 +234,7 @@ func TestCompressWithGzipErrorPropagationCopy(t *testing.T) {
 
 		rc := CompressWithGzip(r)
 		n, err := io.Copy(io.Discard, rc)
-		require.Greater(t, n, int64(0))
+		require.Positive(t, n)
 		require.ErrorIs(t, err, expected)
 		require.NoError(t, rc.Close())
 	}
@@ -306,8 +307,9 @@ func TestAlignDuration(t *testing.T) {
 
 func TestAlignTime(t *testing.T) {
 	rfc3339 := func(value string) time.Time {
-		t, _ := time.Parse(time.RFC3339, value)
-		return t
+		tt, err := time.Parse(time.RFC3339, value)
+		require.NoError(t, err)
+		return tt
 	}
 
 	tests := []struct {
@@ -759,9 +761,15 @@ func TestTimestampAbbrevWarning(t *testing.T) {
 	log.SetOutput(&buf)
 	defer log.SetOutput(backup)
 
-	ts, err := ParseTimestamp("RFC1123", "Mon, 02 Jan 2006 15:04:05 EST", nil)
+	// Try multiple timestamps with abbreviated timezones in case a user
+	// is actually in one of the timezones.
+	ts, err := ParseTimestamp("RFC1123", "Mon, 02 Jan 2006 15:04:05 MST", nil)
 	require.NoError(t, err)
-	require.EqualValues(t, 1136232245, ts.Unix())
+	require.EqualValues(t, 1136239445, ts.Unix())
+
+	ts2, err := ParseTimestamp("RFC1123", "Mon, 02 Jan 2006 15:04:05 EST", nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 1136232245, ts2.Unix())
 
 	require.Contains(t, buf.String(), "Your config is using abbreviated timezones and parsing was changed in v1.27.0")
 }

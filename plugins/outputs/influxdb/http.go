@@ -60,33 +60,34 @@ type DatabaseNotFoundError struct {
 	Database string
 }
 
-// QueryResponseError is the response body from the /query endpoint
-type QueryResponseError struct {
-	Results []QueryResult `json:"results"`
+// queryResponseError is the response body from the /query endpoint
+type queryResponseError struct {
+	Results []queryResult `json:"results"`
 }
 
-type QueryResult struct {
+type queryResult struct {
 	Err string `json:"error,omitempty"`
 }
 
-func (r QueryResponseError) Error() string {
+func (r queryResponseError) Error() string {
 	if len(r.Results) > 0 {
 		return r.Results[0].Err
 	}
 	return ""
 }
 
-// WriteResponseError is the response body from the /write endpoint
-type WriteResponseError struct {
+// writeResponseError is the response body from the /write endpoint
+type writeResponseError struct {
 	Err string `json:"error,omitempty"`
 }
 
-func (r WriteResponseError) Error() string {
+func (r writeResponseError) Error() string {
 	return r.Err
 }
 
 type HTTPConfig struct {
 	URL                       *url.URL
+	LocalAddr                 *net.TCPAddr
 	UserAgent                 string
 	Timeout                   time.Duration
 	Username                  config.Secret
@@ -164,9 +165,15 @@ func NewHTTPClient(cfg HTTPConfig) (*httpClient, error) {
 	var transport *http.Transport
 	switch cfg.URL.Scheme {
 	case "http", "https":
+		var dialerFunc func(ctx context.Context, network, addr string) (net.Conn, error)
+		if cfg.LocalAddr != nil {
+			dialer := &net.Dialer{LocalAddr: cfg.LocalAddr}
+			dialerFunc = dialer.DialContext
+		}
 		transport = &http.Transport{
 			Proxy:           proxy,
 			TLSClientConfig: cfg.TLSConfig,
+			DialContext:     dialerFunc,
 		}
 	case "unix":
 		transport = &http.Transport{
@@ -234,7 +241,7 @@ func (c *httpClient) CreateDatabase(ctx context.Context, database string) error 
 		}
 	}
 
-	queryResp := &QueryResponseError{}
+	queryResp := &queryResponseError{}
 	dec := json.NewDecoder(body)
 	err = dec.Decode(queryResp)
 
@@ -367,7 +374,7 @@ func (c *httpClient) writeBatch(ctx context.Context, db, rp string, metrics []te
 		}
 	}
 
-	writeResp := &WriteResponseError{}
+	writeResp := &writeResponseError{}
 	dec := json.NewDecoder(body)
 
 	var desc string
@@ -386,13 +393,13 @@ func (c *httpClient) writeBatch(ctx context.Context, db, rp string, metrics []te
 		}
 	}
 
-	//checks for any 4xx code and drops metric and retrying will not make the request work
+	// checks for any 4xx code and drops metric and retrying will not make the request work
 	if len(resp.Status) > 0 && resp.Status[0] == '4' {
 		c.log.Errorf("E! [outputs.influxdb] Failed to write metric (will be dropped: %s): %s\n", resp.Status, desc)
 		return nil
 	}
 
-	// This error handles if there is an invaild or missing retention policy
+	// This error handles if there is an invalid or missing retention policy
 	if strings.Contains(desc, errStringRetentionPolicyNotFound) {
 		c.log.Errorf("When writing to [%s]: received error %v", c.URL(), desc)
 		return nil
@@ -480,7 +487,7 @@ func (c *httpClient) makeWriteRequest(address string, body io.Reader) (*http.Req
 	return req, nil
 }
 
-// requestBodyReader warp io.Reader from influx.NewReader to io.ReadCloser, which is usefully to fast close the write
+// requestBodyReader warp io.Reader from influx.NewReader to io.ReadCloser, which is useful to fast close the write
 // side of the connection in case of error
 func (c *httpClient) requestBodyReader(metrics []telegraf.Metric) io.ReadCloser {
 	reader := influx.NewReader(metrics, c.config.Serializer)
@@ -500,16 +507,20 @@ func (c *httpClient) addHeaders(req *http.Request) error {
 		}
 		password, err := c.config.Password.Get()
 		if err != nil {
-			config.ReleaseSecret(username)
+			username.Destroy()
 			return fmt.Errorf("getting password failed: %w", err)
 		}
-		req.SetBasicAuth(string(username), string(password))
-		config.ReleaseSecret(username)
-		config.ReleaseSecret(password)
+		req.SetBasicAuth(username.String(), password.String())
+		username.Destroy()
+		password.Destroy()
 	}
 
 	for header, value := range c.config.Headers {
-		req.Header.Set(header, value)
+		if strings.EqualFold(header, "host") {
+			req.Host = value
+		} else {
+			req.Header.Set(header, value)
+		}
 	}
 
 	return nil

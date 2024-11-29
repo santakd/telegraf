@@ -1,8 +1,14 @@
 # HTTP Output Plugin
 
-This plugin sends metrics in a HTTP message encoded using one of the output data
-formats. For data_formats that support batching, metrics are sent in batch
-format by default.
+This plugin writes metrics to a HTTP endpoint using one of the supported
+[data formats][data_formats]. For data formats supporting batching, metrics are
+sent in batches by default.
+
+⭐ Telegraf v1.7.0
+🏷️ applications
+💻 all
+
+[data_formats]: /docs/DATA_FORMATS_OUTPUT.md
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -15,8 +21,8 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 ## Secret-store support
 
-This plugin supports secrets from secret-stores for the `username` and
-`password` option.
+This plugin supports secrets from secret-stores for the `username`, `password`
+`headers`, and `cookie_auth_headers` option.
 See the [secret-store documentation][SECRETSTORE] for more details on how
 to use them.
 
@@ -49,6 +55,10 @@ to use them.
 
   ## Goole API Auth
   # google_application_credentials = "/etc/telegraf/example_secret.json"
+
+  ## HTTP Proxy support
+  # use_system_proxy = false
+  # http_proxy_url = ""
 
   ## Optional TLS Config
   # tls_ca = "/etc/telegraf/ca.pem"

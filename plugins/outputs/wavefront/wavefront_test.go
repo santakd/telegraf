@@ -12,7 +12,7 @@ import (
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/outputs"
-	serializer "github.com/influxdata/telegraf/plugins/serializers/wavefront"
+	serializers_wavefront "github.com/influxdata/telegraf/plugins/serializers/wavefront"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -48,25 +48,25 @@ func TestBuildMetrics(t *testing.T) {
 
 	var metricTests = []struct {
 		metric       telegraf.Metric
-		metricPoints []serializer.MetricPoint
+		metricPoints []serializers_wavefront.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "testing.just-a-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testutil.TestMetric(float64(1), "testing_just/another,metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "testing.just-another-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testMetric1,
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "test.simple.metric", Value: 123, Timestamp: timestamp, Source: "testHost", Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
@@ -93,18 +93,18 @@ func TestBuildMetricsStrict(t *testing.T) {
 
 	var metricTests = []struct {
 		metric       telegraf.Metric
-		metricPoints []serializer.MetricPoint
+		metricPoints []serializers_wavefront.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{Metric: w.Prefix + "testing.just-a-metric-float", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 				{Metric: w.Prefix + "testing.metric2", Value: 1, Timestamp: timestamp, Tags: map[string]string{"tag1": "value1"}},
 			},
 		},
 		{
 			testutil.TestMetric(float64(1), "testing_just/another,metric:float", "metric2"),
-			[]serializer.MetricPoint{
+			[]serializers_wavefront.MetricPoint{
 				{
 					Metric:    w.Prefix + "testing.just/another,metric-float",
 					Value:     1,
@@ -142,15 +142,15 @@ func TestBuildMetricsWithSimpleFields(t *testing.T) {
 
 	var metricTests = []struct {
 		metric      telegraf.Metric
-		metricLines []serializer.MetricPoint
+		metricLines []serializers_wavefront.MetricPoint
 	}{
 		{
 			testutil.TestMetric(float64(1), "testing_just*a%metric:float"),
-			[]serializer.MetricPoint{{Metric: w.Prefix + "testing.just-a-metric-float.value", Value: 1}},
+			[]serializers_wavefront.MetricPoint{{Metric: w.Prefix + "testing.just-a-metric-float.value", Value: 1}},
 		},
 		{
 			testMetric1,
-			[]serializer.MetricPoint{{Metric: w.Prefix + "test.simple.metric.value", Value: 123}},
+			[]serializers_wavefront.MetricPoint{{Metric: w.Prefix + "test.simple.metric.value", Value: 123}},
 		},
 	}
 
@@ -408,7 +408,7 @@ func TestMakeAuthOptions(t *testing.T) {
 	cspAPIWavefront.AuthCSPAPIToken = config.NewSecret([]byte("fake-app-token"))
 	options, err := cspAPIWavefront.makeAuthOptions()
 	require.NoError(t, err)
-	require.Equal(t, 1, len(options))
+	require.Len(t, options, 1)
 
 	cspClientCredsWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
 	cspClientCredsWavefront.AuthCSPClientCredentials = &authCSPClientCredentials{
@@ -417,7 +417,7 @@ func TestMakeAuthOptions(t *testing.T) {
 	}
 	options, err = cspClientCredsWavefront.makeAuthOptions()
 	require.NoError(t, err)
-	require.Equal(t, 1, len(options))
+	require.Len(t, options, 1)
 
 	orgID := "org-id"
 	cspClientCredsWithOrgIDWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
@@ -428,18 +428,18 @@ func TestMakeAuthOptions(t *testing.T) {
 	}
 	options, err = cspClientCredsWithOrgIDWavefront.makeAuthOptions()
 	require.NoError(t, err)
-	require.Equal(t, 1, len(options))
+	require.Len(t, options, 1)
 
 	apiTokenWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
 	apiTokenWavefront.AuthCSPAPIToken = config.NewSecret([]byte("fake-wavefront-api-token"))
 	options, err = apiTokenWavefront.makeAuthOptions()
 	require.NoError(t, err)
-	require.Equal(t, 1, len(options))
+	require.Len(t, options, 1)
 
 	noAuthOptionsWavefront := outputs.Outputs["wavefront"]().(*Wavefront)
 	options, err = noAuthOptionsWavefront.makeAuthOptions()
 	require.NoError(t, err)
-	require.Equal(t, 0, len(options))
+	require.Empty(t, options)
 }
 
 // Benchmarks to test performance of string replacement via Regex and Sanitize
@@ -459,6 +459,6 @@ func BenchmarkReplaceAllLiteralString(b *testing.B) {
 
 func BenchmarkReplacer(b *testing.B) {
 	for n := 0; n < b.N; n++ {
-		serializer.Sanitize(false, testString)
+		serializers_wavefront.Sanitize(false, testString)
 	}
 }

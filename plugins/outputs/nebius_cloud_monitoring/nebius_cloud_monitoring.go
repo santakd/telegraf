@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/influxdata/telegraf"
@@ -69,7 +70,7 @@ const (
 	*/
 	//nolint:gosec // G101: Potential hardcoded credentials - false positive
 	defaultMetadataTokenURL  = "http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token"
-	defaultMetadataFolderURL = "http://169.254.169.254/computeMetadata/v1/yandex/folder-id"
+	defaultMetadataFolderURL = "http://169.254.169.254/computeMetadata/v1/instance/vendor/folder-id"
 )
 
 func (*NebiusCloudMonitoring) SampleConfig() string {
@@ -86,6 +87,9 @@ func (a *NebiusCloudMonitoring) Init() error {
 	if a.service == "" {
 		a.service = "custom"
 	}
+	if service := os.Getenv("NEBIUS_SERVICE"); service != "" {
+		a.service = service
+	}
 	if a.metadataTokenURL == "" {
 		a.metadataTokenURL = defaultMetadataTokenURL
 	}
@@ -99,7 +103,7 @@ func (a *NebiusCloudMonitoring) Init() error {
 		},
 		Timeout: time.Duration(a.Timeout),
 	}
-	tags := map[string]string{}
+	tags := make(map[string]string)
 	a.MetricOutsideWindow = selfstat.Register("nebius_cloud_monitoring", "metric_outside_window", tags)
 	return nil
 }

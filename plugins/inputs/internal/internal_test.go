@@ -1,17 +1,16 @@
 package internal
 
 import (
-	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf/selfstat"
 	"github.com/influxdata/telegraf/testutil"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestSelfPlugin(t *testing.T) {
-	s := Self{
+	s := Internal{
 		CollectMemstats: true,
 	}
 	acc := &testutil.Accumulator{}
@@ -69,7 +68,7 @@ func TestSelfPlugin(t *testing.T) {
 }
 
 func TestNoMemStat(t *testing.T) {
-	s := Self{
+	s := Internal{
 		CollectMemstats: false,
 		CollectGostats:  false,
 	}
@@ -81,7 +80,7 @@ func TestNoMemStat(t *testing.T) {
 }
 
 func TestGostats(t *testing.T) {
-	s := Self{
+	s := Internal{
 		CollectMemstats: false,
 		CollectGostats:  true,
 	}
@@ -100,15 +99,15 @@ func TestGostats(t *testing.T) {
 	}
 
 	require.NotNil(t, metric)
-	require.Equal(t, metric.Measurement, "internal_gostats")
-	require.Equal(t, len(metric.Tags), 1)
+	require.Equal(t, "internal_gostats", metric.Measurement)
+	require.Len(t, metric.Tags, 1)
 	require.Contains(t, metric.Tags, "go_version")
 
 	for name, value := range metric.Fields {
 		switch value.(type) {
 		case int64, uint64, float64:
 		default:
-			require.True(t, false, fmt.Sprintf("field %s is of non-numeric type %T\n", name, value))
+			require.Truef(t, false, "field %s is of non-numeric type %T\n", name, value)
 		}
 	}
 }

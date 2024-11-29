@@ -2,11 +2,11 @@ package kubernetes
 
 import (
 	"fmt"
-	"github.com/influxdata/telegraf/filter"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/influxdata/telegraf/filter"
 	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -15,26 +15,34 @@ func TestKubernetesStats(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.RequestURI == "/stats/summary" {
 			w.WriteHeader(http.StatusOK)
-			_, err := fmt.Fprintln(w, responseStatsSummery)
-			require.NoError(t, err)
+			if _, err := fmt.Fprintln(w, responseStatsSummery); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		}
 		if r.RequestURI == "/pods" {
 			w.WriteHeader(http.StatusOK)
-			_, err := fmt.Fprintln(w, responsePods)
-			require.NoError(t, err)
+			if _, err := fmt.Fprintln(w, responsePods); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		}
 	}))
 	defer ts.Close()
 
-	labelFilter, _ := filter.NewIncludeExcludeFilter([]string{"app", "superkey"}, nil)
+	labelFilter, err := filter.NewIncludeExcludeFilter([]string{"app", "superkey"}, nil)
+	require.NoError(t, err)
 
 	k := &Kubernetes{
-		URL:         ts.URL,
-		labelFilter: labelFilter,
+		URL:            ts.URL,
+		labelFilter:    labelFilter,
+		NodeMetricName: "kubernetes_node",
 	}
 
 	var acc testutil.Accumulator
-	err := acc.GatherError(k.Gather)
+	err = acc.GatherError(k.Gather)
 	require.NoError(t, err)
 
 	fields := map[string]interface{}{

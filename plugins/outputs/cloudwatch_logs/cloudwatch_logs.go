@@ -4,18 +4,18 @@ package cloudwatch_logs
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
+	common_aws "github.com/influxdata/telegraf/plugins/common/aws"
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
@@ -56,30 +56,30 @@ type cloudWatchLogs interface {
 // CloudWatchLogs plugin object definition
 type CloudWatchLogs struct {
 	LogGroup string          `toml:"log_group"`
-	lg       *types.LogGroup //log group data
+	lg       *types.LogGroup // log group data
 
 	LogStream string                         `toml:"log_stream"`
-	lsKey     string                         //log stream source: tag or field
-	lsSource  string                         //log stream source tag or field name
-	ls        map[string]*logStreamContainer //log stream info
+	lsKey     string                         // log stream source: tag or field
+	lsSource  string                         // log stream source tag or field name
+	ls        map[string]*logStreamContainer // log stream info
 
 	LDMetricName string `toml:"log_data_metric_name"`
 
 	LDSource      string `toml:"log_data_source"`
-	logDatKey     string //log data source (tag or field)
-	logDataSource string //log data source tag or field name
+	logDatKey     string // log data source (tag or field)
+	logDataSource string // log data source tag or field name
 
-	svc cloudWatchLogs //cloudwatch logs service
+	svc cloudWatchLogs // cloudwatch logs service
 
 	Log telegraf.Logger `toml:"-"`
 
-	internalaws.CredentialConfig
+	common_aws.CredentialConfig
 }
 
 const (
 	// Log events must comply with the following
 	// (https://docs.aws.amazon.com/sdk-for-go/api/service/cloudwatchlogs/#CloudWatchLogs.PutLogEvents):
-	maxLogMessageLength           = 262144 - awsOverheadPerLogMessageBytes //In bytes
+	maxLogMessageLength           = 262144 - awsOverheadPerLogMessageBytes // In bytes
 	maxBatchSizeBytes             = 1048576                                // The sum of all event messages in UTF-8, plus 26 bytes for each log event
 	awsOverheadPerLogMessageBytes = 26
 	maxFutureLogEventTimeOffset   = time.Hour * 2 // None of the log events in the batch can be more than 2 hours in the future.
@@ -89,7 +89,7 @@ const (
 
 	maxItemsInBatch = 10000 // The maximum number of log events in a batch is 10,000.
 
-	//maxTimeSpanInBatch = time.Hour * 24 // A batch of log events in a single request cannot span more than 24 hours.
+	// maxTimeSpanInBatch = time.Hour * 24 // A batch of log events in a single request cannot span more than 24 hours.
 	// Otherwise, the operation fails.
 )
 
@@ -100,28 +100,28 @@ func (*CloudWatchLogs) SampleConfig() string {
 // Init initialize plugin with checking configuration parameters
 func (c *CloudWatchLogs) Init() error {
 	if c.LogGroup == "" {
-		return fmt.Errorf("log group is not set")
+		return errors.New("log group is not set")
 	}
 
 	if c.LogStream == "" {
-		return fmt.Errorf("log stream is not set")
+		return errors.New("log stream is not set")
 	}
 
 	if c.LDMetricName == "" {
-		return fmt.Errorf("log data metrics name is not set")
+		return errors.New("log data metrics name is not set")
 	}
 
 	if c.LDSource == "" {
-		return fmt.Errorf("log data source is not set")
+		return errors.New("log data source is not set")
 	}
 	lsSplitArray := strings.Split(c.LDSource, ":")
 	if len(lsSplitArray) != 2 {
-		return fmt.Errorf("log data source is not properly formatted, ':' is missed.\n" +
+		return errors.New("log data source is not properly formatted, ':' is missed.\n" +
 			"Should be 'tag:<tag_mame>' or 'field:<field_name>'")
 	}
 
 	if lsSplitArray[0] != "tag" && lsSplitArray[0] != "field" {
-		return fmt.Errorf("log data source is not properly formatted.\n" +
+		return errors.New("log data source is not properly formatted.\n" +
 			"Should be 'tag:<tag_mame>' or 'field:<field_name>'")
 	}
 
@@ -153,26 +153,19 @@ func (c *CloudWatchLogs) Connect() error {
 	if err != nil {
 		return err
 	}
-	if c.CredentialConfig.EndpointURL != "" && c.CredentialConfig.Region != "" {
-		customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-			return aws.Endpoint{
-				PartitionID:   "aws",
-				URL:           c.CredentialConfig.EndpointURL,
-				SigningRegion: c.CredentialConfig.Region,
-			}, nil
-		})
+	cfg.Credentials = awsCreds.Credentials
 
-		cfg, err = config.LoadDefaultConfig(context.TODO(), config.WithEndpointResolverWithOptions(customResolver))
-		if err != nil {
-			return err
-		}
+	if c.CredentialConfig.EndpointURL != "" && c.CredentialConfig.Region != "" {
+		c.svc = cloudwatchlogs.NewFromConfig(cfg, func(o *cloudwatchlogs.Options) {
+			o.Region = c.CredentialConfig.Region
+			o.BaseEndpoint = &c.CredentialConfig.EndpointURL
+		})
+	} else {
+		c.svc = cloudwatchlogs.NewFromConfig(cfg)
 	}
 
-	cfg.Credentials = awsCreds.Credentials
-	c.svc = cloudwatchlogs.NewFromConfig(cfg)
-
-	//Find log group with name 'c.LogGroup'
-	if c.lg == nil { //In case connection is not retried, first time
+	// Find log group with name 'c.LogGroup'
+	if c.lg == nil { // In case connection is not retried, first time
 		for logGroupsOutput.NextToken != nil {
 			logGroupsOutput, err = c.svc.DescribeLogGroups(
 				context.Background(),
@@ -212,7 +205,7 @@ func (c *CloudWatchLogs) Connect() error {
 			c.Log.Debugf("Log stream %q...", c.lsSource)
 		}
 
-		c.ls = map[string]*logStreamContainer{}
+		c.ls = make(map[string]*logStreamContainer)
 	}
 
 	return nil
@@ -235,7 +228,7 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 	maxTime := time.Now().Add(maxFutureLogEventTimeOffset)
 
 	for _, m := range metrics {
-		//Filtering metrics
+		// Filtering metrics
 		if m.Name() != c.LDMetricName {
 			continue
 		}
@@ -288,7 +281,7 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 			continue
 		}
 
-		//Check if message size is not fit to batch
+		// Check if message size is not fit to batch
 		if len(logData) > maxLogMessageLength {
 			metricStr := fmt.Sprintf("%v", m)
 			c.Log.Errorf(
@@ -298,39 +291,40 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 			)
 			continue
 		}
-		//Batching log messages
-		//awsOverheadPerLogMessageBytes - is mandatory aws overhead per each log message
+		// Batching log messages
+		// awsOverheadPerLogMessageBytes - is mandatory aws overhead per each log message
 		messageSizeInBytesForAWS := len(logData) + awsOverheadPerLogMessageBytes
 
-		//Pick up existing or prepare new log stream container.
-		//Log stream container stores logs per log stream in
-		//the AWS Cloudwatch logs API friendly structure
+		// Pick up existing or prepare new log stream container.
+		// Log stream container stores logs per log stream in
+		// the AWS Cloudwatch logs API friendly structure
 		if val, ok := c.ls[logStream]; ok {
 			lsContainer = val
 		} else {
 			lsContainer.messageBatches[0].messageCount = 0
-			lsContainer.messageBatches[0].logEvents = []types.InputLogEvent{}
+			lsContainer.messageBatches[0].logEvents = make([]types.InputLogEvent, 0)
 			c.ls[logStream] = lsContainer
 		}
 
 		if lsContainer.currentBatchSizeBytes+messageSizeInBytesForAWS > maxBatchSizeBytes ||
 			lsContainer.messageBatches[lsContainer.currentBatchIndex].messageCount >= maxItemsInBatch {
-			//Need to start new batch, and reset counters
+			// Need to start new batch, and reset counters
 			lsContainer.currentBatchIndex++
 			lsContainer.messageBatches = append(lsContainer.messageBatches,
 				messageBatch{
-					logEvents:    []types.InputLogEvent{},
-					messageCount: 0})
+					messageCount: 0,
+				},
+			)
 			lsContainer.currentBatchSizeBytes = messageSizeInBytesForAWS
 		} else {
 			lsContainer.currentBatchSizeBytes += messageSizeInBytesForAWS
 			lsContainer.messageBatches[lsContainer.currentBatchIndex].messageCount++
 		}
 
-		//AWS need time in milliseconds. time.UnixNano() returns time in nanoseconds since epoch
-		//we store here TS with nanosec precision iun order to have proper ordering, later ts will be reduced to milliseconds
+		// AWS need time in milliseconds. time.UnixNano() returns time in nanoseconds since epoch
+		// we store here TS with nanosec precision iun order to have proper ordering, later ts will be reduced to milliseconds
 		metricTime := m.Time().UnixNano()
-		//Adding metring to batch
+		// Adding metring to batch
 		lsContainer.messageBatches[lsContainer.currentBatchIndex].logEvents =
 			append(lsContainer.messageBatches[lsContainer.currentBatchIndex].logEvents,
 				types.InputLogEvent{
@@ -344,15 +338,15 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 			if len(batch.logEvents) == 0 {
 				continue
 			}
-			//Sorting
+			// Sorting
 			sort.Slice(batch.logEvents[:], func(i, j int) bool {
 				return *batch.logEvents[i].Timestamp < *batch.logEvents[j].Timestamp
 			})
 
 			putLogEvents := cloudwatchlogs.PutLogEventsInput{LogGroupName: &c.LogGroup, LogStreamName: &logStream}
 			if elem.sequenceToken == "" {
-				//This is the first attempt to write to log stream,
-				//need to check log stream existence and create it if necessary
+				// This is the first attempt to write to log stream,
+				// need to check log stream existence and create it if necessary
 				describeLogStreamOutput, err := c.svc.DescribeLogStreams(context.Background(), &cloudwatchlogs.DescribeLogStreamsInput{
 					LogGroupName:        &c.LogGroup,
 					LogStreamNamePrefix: &logStream})
@@ -367,7 +361,7 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 					putLogEvents.SequenceToken = nil
 				} else if err == nil && len(describeLogStreamOutput.LogStreams) == 1 {
 					putLogEvents.SequenceToken = describeLogStreamOutput.LogStreams[0].UploadSequenceToken
-				} else if err == nil && len(describeLogStreamOutput.LogStreams) > 1 { //Ambiguity
+				} else if err == nil && len(describeLogStreamOutput.LogStreams) > 1 { // Ambiguity
 					c.Log.Errorf("More than 1 log stream found with prefix %q in log group %q.", logStream, c.LogGroup)
 					continue
 				} else {
@@ -378,24 +372,24 @@ func (c *CloudWatchLogs) Write(metrics []telegraf.Metric) error {
 				putLogEvents.SequenceToken = &c.ls[logStream].sequenceToken
 			}
 
-			//Upload log events
-			//Adjusting TS to be in align with cloudwatch logs requirements
+			// Upload log events
+			// Adjusting TS to be in align with cloudwatch logs requirements
 			for _, event := range batch.logEvents {
 				*event.Timestamp = *event.Timestamp / 1000000
 			}
 			putLogEvents.LogEvents = batch.logEvents
 
-			//There is a quota of 5 requests per second per log stream. Additional
-			//requests are throttled. This quota can't be changed.
+			// There is a quota of 5 requests per second per log stream. Additional
+			// requests are throttled. This quota can't be changed.
 			putLogEventsOutput, err := c.svc.PutLogEvents(context.Background(), &putLogEvents)
 			if err != nil {
 				c.Log.Errorf("Can't push logs batch to AWS. Reason: %v", err)
 				continue
 			}
-			//Cleanup batch
+			// Cleanup batch
 			elem.messageBatches[index] = messageBatch{
-				logEvents:    []types.InputLogEvent{},
-				messageCount: 0}
+				messageCount: 0,
+			}
 
 			elem.sequenceToken = *putLogEventsOutput.NextSequenceToken
 		}

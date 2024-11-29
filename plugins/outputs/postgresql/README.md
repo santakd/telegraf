@@ -1,7 +1,13 @@
 # PostgreSQL Output Plugin
 
-This output plugin writes metrics to PostgreSQL (or compatible database).
-The plugin manages the schema, automatically updating missing columns.
+This plugin writes metrics to a [PostgreSQL][postgresql] (or compatible) server
+managing the schema and automatically updating missing columns.
+
+⭐ Telegraf v1.24.0
+🏷️ datastore
+💻 all
+
+[postgresql]: https://www.postgresql.org/
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -11,6 +17,28 @@ modify metrics, tags, and field or create aliases and configure ordering, etc.
 See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
 
 [CONFIGURATION.md]: ../../../docs/CONFIGURATION.md#plugins
+
+## Startup error behavior options <!-- @/docs/includes/startup_error_behavior.md -->
+
+In addition to the plugin-specific and global configuration settings the plugin
+supports options for specifying the behavior when experiencing startup errors
+using the `startup_error_behavior` setting. Available values are:
+
+- `error`:  Telegraf with stop and exit in case of startup errors. This is the
+            default behavior.
+- `ignore`: Telegraf will ignore startup errors for this plugin and disables it
+            but continues processing for all other plugins.
+- `retry`:  Telegraf will try to startup the plugin in every gather or write
+            cycle in case of startup errors. The plugin is disabled until
+            the startup succeeds.
+
+## Secret-store support
+
+This plugin supports secrets from secret-stores for the `connection` option.
+See the [secret-store documentation][SECRETSTORE] for more details on how
+to use them.
+
+[SECRETSTORE]: ../../../docs/CONFIGURATION.md#secret-store-secrets
 
 ## Configuration
 
@@ -31,7 +59,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## Non-standard parameters:
   ##   pool_max_conns (default: 1) - Maximum size of connection pool for parallel (per-batch per-table) inserts.
   ##   pool_min_conns (default: 0) - Minimum size of connection pool.
-  ##   pool_max_conn_lifetime (default: 0s) - Maximum age of a connection before closing.
+  ##   pool_max_conn_lifetime (default: 0s) - Maximum connection age before closing.
   ##   pool_max_conn_idle_time (default: 0s) - Maximum idle time of a connection before closing.
   ##   pool_health_check_period (default: 0s) - Duration between health checks on idle connections.
   # connection = ""
@@ -69,8 +97,9 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   # ]
 
   ## Templated statements to execute when adding columns to a table.
-  ## Set to an empty list to disable. Points containing tags for which there is no column will be skipped. Points
-  ## containing fields for which there is no column will have the field omitted.
+  ## Set to an empty list to disable. Points containing tags for which there is
+  ## no column will be skipped. Points containing fields for which there is no
+  ## column will have the field omitted.
   # add_column_templates = [
   #   '''ALTER TABLE {{ .table }} ADD COLUMN IF NOT EXISTS {{ .columns|join ", ADD COLUMN IF NOT EXISTS " }}''',
   # ]
@@ -81,26 +110,33 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   # ]
 
   ## Templated statements to execute when adding columns to a tag table.
-  ## Set to an empty list to disable. Points containing tags for which there is no column will be skipped.
+  ## Set to an empty list to disable. Points containing tags for which there is
+  ## no column will be skipped.
   # tag_table_add_column_templates = [
   #   '''ALTER TABLE {{ .table }} ADD COLUMN IF NOT EXISTS {{ .columns|join ", ADD COLUMN IF NOT EXISTS " }}''',
   # ]
 
-  ## The postgres data type to use for storing unsigned 64-bit integer values (Postgres does not have a native
-  ## unsigned 64-bit integer type).
+  ## The postgres data type to use for storing unsigned 64-bit integer values
+  ## (Postgres does not have a native unsigned 64-bit integer type).
   ## The value can be one of:
   ##   numeric - Uses the PostgreSQL "numeric" data type.
   ##   uint8 - Requires pguint extension (https://github.com/petere/pguint)
   # uint64_type = "numeric"
 
-  ## When using pool_max_conns>1, and a temporary error occurs, the query is retried with an incremental backoff. This
-  ## controls the maximum backoff duration.
+  ## When using pool_max_conns > 1, and a temporary error occurs, the query is
+  ## retried with an incremental backoff. This controls the maximum duration.
   # retry_max_backoff = "15s"
 
-  ## Approximate number of tag IDs to store in in-memory cache (when using tags_as_foreign_keys).
-  ## This is an optimization to skip inserting known tag IDs.
-  ## Each entry consumes approximately 34 bytes of memory.
+  ## Approximate number of tag IDs to store in in-memory cache (when using
+  ## tags_as_foreign_keys). This is an optimization to skip inserting known
+  ## tag IDs. Each entry consumes approximately 34 bytes of memory.
   # tag_cache_size = 100000
+
+  ## Cut column names at the given length to not exceed PostgreSQL's
+  ## 'identifier length' limit (default: no limit)
+  ## (see https://www.postgresql.org/docs/current/limits.html)
+  ## Be careful to not create duplicate column names!
+  # column_name_length_limit = 0
 
   ## Enable & set the log level for the Postgres driver.
   # log_level = "warn" # trace, debug, info, warn, error, none
@@ -166,6 +202,19 @@ statements. This allows for complete control of the schema by the user.
 Documentation on how to write templates can be found [sqltemplate docs][1]
 
 [1]: https://pkg.go.dev/github.com/influxdata/telegraf/plugins/outputs/postgresql/sqltemplate
+
+## Long Column Names
+
+Postgres imposes a limit on the length of column identifiers, which can be found
+in the [official docs](https://www.postgresql.org/docs/current/limits.html). By
+default Telegraf does not enforce this limit as this limit can be modified on
+the server side. Furthermore, cutting off column names could lead to collisions
+if the columns are only different after the cut-off.
+
+> [!WARNING]
+> Make sure you will not cause column name collisions when setting
+> `column_name_length_limit`! If in doubt, explicitly shorten the field and tag
+> names using e.g. the regexp processor.
 
 ### Samples
 
@@ -250,6 +299,17 @@ tag_table_add_column_templates = [
     '''DROP VIEW {{ .metricTable.WithSchema "public" }}''',
     '''CREATE VIEW {{ .metricTable.WithSchema "public" }} AS SELECT time, {{ (.allColumns.Tags.Concat .metricTable.Columns.Fields).Identifiers | join "," }} FROM {{ .metricTable.WithSuffix "_data" }} t, {{ .table }} tt WHERE t.tag_id = tt.tag_id''',
 ]
+```
+
+#### Index
+
+Create an index on time and tag columns for faster querying of data.
+
+```toml
+create_templates = [
+    '''CREATE TABLE {{ .table }} ({{ .columns }})''',
+    '''CREATE INDEX ON {{ .table }} USING btree({{ .columns.Keys.Identifiers | join "," }})'''
+  ]
 ```
 
 ## Error handling

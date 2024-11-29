@@ -2,6 +2,7 @@ package shim
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/logger"
 	"github.com/influxdata/telegraf/plugins/serializers/influx"
 )
 
@@ -37,7 +39,7 @@ type Shim struct {
 	Processor telegraf.StreamingProcessor
 	Output    telegraf.Output
 
-	log *Logger
+	log telegraf.Logger
 
 	// streams
 	stdin  io.Reader
@@ -58,7 +60,7 @@ func New() *Shim {
 		stdin:    os.Stdin,
 		stdout:   os.Stdout,
 		stderr:   os.Stderr,
-		log:      NewLogger(),
+		log:      logger.New("", "", ""),
 	}
 }
 
@@ -77,20 +79,20 @@ func (s *Shim) Run(pollInterval time.Duration) error {
 	if s.Input != nil {
 		err := s.RunInput(pollInterval)
 		if err != nil {
-			return fmt.Errorf("RunInput error: %w", err)
+			return fmt.Errorf("running input failed: %w", err)
 		}
 	} else if s.Processor != nil {
 		err := s.RunProcessor()
 		if err != nil {
-			return fmt.Errorf("RunProcessor error: %w", err)
+			return fmt.Errorf("running processor failed: %w", err)
 		}
 	} else if s.Output != nil {
 		err := s.RunOutput()
 		if err != nil {
-			return fmt.Errorf("RunOutput error: %w", err)
+			return fmt.Errorf("running output failed: %w", err)
 		}
 	} else {
-		return fmt.Errorf("nothing to run")
+		return errors.New("nothing to run")
 	}
 
 	return nil
@@ -113,13 +115,16 @@ func (s *Shim) writeProcessedMetrics() error {
 			}
 			b, err := serializer.Serialize(m)
 			if err != nil {
+				m.Reject()
 				return fmt.Errorf("failed to serialize metric: %w", err)
 			}
 			// Write this to stdout
 			_, err = fmt.Fprint(s.stdout, string(b))
 			if err != nil {
+				m.Drop()
 				return fmt.Errorf("failed to write metric: %w", err)
 			}
+			m.Accept()
 		}
 	}
 }

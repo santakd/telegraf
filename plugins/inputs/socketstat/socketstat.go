@@ -60,7 +60,7 @@ func (ss *Socketstat) Gather(acc telegraf.Accumulator) error {
 	return nil
 }
 
-func socketList(cmdName string, proto string, timeout config.Duration) (*bytes.Buffer, error) {
+func socketList(cmdName, proto string, timeout config.Duration) (*bytes.Buffer, error) {
 	// Run ss for the given protocol, return the output as bytes.Buffer
 	args := []string{"-in", "--" + proto}
 	cmd := exec.Command(cmdName, args...)
@@ -75,7 +75,7 @@ func socketList(cmdName string, proto string, timeout config.Duration) (*bytes.B
 
 func (ss *Socketstat) parseAndGather(acc telegraf.Accumulator, data *bytes.Buffer, proto string) {
 	scanner := bufio.NewScanner(data)
-	tags := map[string]string{}
+	tags := make(map[string]string)
 	fields := make(map[string]interface{})
 
 	// ss output can have blank lines, and/or socket basic info lines and more advanced
@@ -132,7 +132,7 @@ func (ss *Socketstat) parseAndGather(acc telegraf.Accumulator, data *bytes.Buffe
 		// formats depending on the protocol.
 		tags, fields = getTagsAndState(proto, words, ss.Log)
 
-		// This line containted metrics, so record that.
+		// This line contained metrics, so record that.
 		flushData = true
 	}
 	if flushData {

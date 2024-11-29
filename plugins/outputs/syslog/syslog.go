@@ -11,13 +11,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/influxdata/go-syslog/v3/nontransparent"
-	"github.com/influxdata/go-syslog/v3/rfc5424"
+	"github.com/leodido/go-syslog/v4/nontransparent"
+	"github.com/leodido/go-syslog/v4/rfc5424"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	framing "github.com/influxdata/telegraf/internal/syslog"
-	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
+	"github.com/influxdata/telegraf/internal"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
@@ -33,16 +33,27 @@ type Syslog struct {
 	DefaultAppname      string
 	Sdids               []string
 	Separator           string `toml:"sdparam_separator"`
-	Framing             framing.Framing
+	Framing             string `toml:"framing"`
 	Trailer             nontransparent.TrailerType
 	Log                 telegraf.Logger `toml:"-"`
 	net.Conn
-	tlsint.ClientConfig
+	common_tls.ClientConfig
 	mapper *SyslogMapper
 }
 
 func (*Syslog) SampleConfig() string {
 	return sampleConfig
+}
+func (s *Syslog) Init() error {
+	// Check framing and set default
+	switch s.Framing {
+	case "":
+		s.Framing = "octet-counting"
+	case "octet-counting", "non-transparent":
+	default:
+		return fmt.Errorf("invalid 'framing' %q", s.Framing)
+	}
+	return nil
 }
 
 func (s *Syslog) Connect() error {
@@ -65,7 +76,7 @@ func (s *Syslog) Connect() error {
 		c, err = tls.Dial(spl[0], spl[1], tlsCfg)
 	}
 	if err != nil {
-		return err
+		return &internal.StartupError{Err: err, Retry: true}
 	}
 
 	if err := s.setKeepAlive(c); err != nil {
@@ -110,13 +121,14 @@ func (s *Syslog) Write(metrics []telegraf.Metric) (err error) {
 		}
 	}
 	for _, metric := range metrics {
-		var msg *rfc5424.SyslogMessage
-		if msg, err = s.mapper.MapMetricToSyslogMessage(metric); err != nil {
+		msg, err := s.mapper.MapMetricToSyslogMessage(metric)
+		if err != nil {
 			s.Log.Errorf("Failed to create syslog message: %v", err)
 			continue
 		}
-		var msgBytesWithFraming []byte
-		if msgBytesWithFraming, err = s.getSyslogMessageBytesWithFraming(msg); err != nil {
+
+		msgBytesWithFraming, err := s.getSyslogMessageBytesWithFraming(msg)
+		if err != nil {
 			s.Log.Errorf("Failed to convert syslog message with framing: %v", err)
 			continue
 		}
@@ -141,7 +153,7 @@ func (s *Syslog) getSyslogMessageBytesWithFraming(msg *rfc5424.SyslogMessage) ([
 	}
 	msgBytes := []byte(msgString)
 
-	if s.Framing == framing.OctetCounting {
+	if s.Framing == "octet-counting" {
 		return append([]byte(strconv.Itoa(len(msgBytes))+" "), msgBytes...), nil
 	}
 	// Non-transparent framing
@@ -167,7 +179,6 @@ func (s *Syslog) initializeSyslogMapper() {
 
 func newSyslog() *Syslog {
 	return &Syslog{
-		Framing:             framing.OctetCounting,
 		Trailer:             nontransparent.LF,
 		Separator:           "_",
 		DefaultSeverityCode: uint8(5), // notice

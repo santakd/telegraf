@@ -7,6 +7,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -20,7 +21,6 @@ func TestParse(t *testing.T) {
 	}{
 		{
 			name: "no bytes returns no metrics",
-			want: []telegraf.Metric{},
 		},
 		{
 			name:        "test without trailing end",
@@ -103,27 +103,23 @@ func TestParse(t *testing.T) {
 		{
 			name:    "keys without = or values are ignored",
 			bytes:   []byte(`i am no data.`),
-			want:    []telegraf.Metric{},
 			wantErr: false,
 		},
 		{
 			name:    "keys without values are ignored",
 			bytes:   []byte(`foo="" bar=`),
-			want:    []telegraf.Metric{},
 			wantErr: false,
 		},
 		{
 			name:        "unterminated quote produces error",
 			measurement: "testlog",
 			bytes:       []byte(`bar=baz foo="bar`),
-			want:        []telegraf.Metric{},
 			wantErr:     true,
 		},
 		{
 			name:        "malformed key",
 			measurement: "testlog",
 			bytes:       []byte(`"foo=" bar=baz`),
-			want:        []telegraf.Metric{},
 			wantErr:     true,
 		},
 	}
@@ -280,5 +276,59 @@ func TestTags(t *testing.T) {
 			}
 			testutil.RequireMetricEqual(t, tt.want, got, testutil.IgnoreTime())
 		})
+	}
+}
+
+const benchmarkData = `tags_host=myhost tags_platform=python tags_sdkver=3.11.5 value=5
+tags_host=myhost tags_platform=python tags_sdkver=3.11.4 value=4
+`
+
+func TestBenchmarkData(t *testing.T) {
+	plugin := &Parser{
+		TagKeys: []string{"tags_host", "tags_platform", "tags_sdkver"},
+	}
+	require.NoError(t, plugin.Init())
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"",
+			map[string]string{
+				"tags_host":     "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.5",
+			},
+			map[string]interface{}{
+				"value": 5,
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"",
+			map[string]string{
+				"tags_host":     "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.4",
+			},
+			map[string]interface{}{
+				"value": 4,
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	actual, err := plugin.Parse([]byte(benchmarkData))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime(), testutil.SortMetrics())
+}
+
+func BenchmarkParsing(b *testing.B) {
+	plugin := &Parser{
+		TagKeys: []string{"tags_host", "tags_platform", "tags_sdkver"},
+	}
+	require.NoError(b, plugin.Init())
+
+	for n := 0; n < b.N; n++ {
+		//nolint:errcheck // Benchmarking so skip the error check to avoid the unnecessary operations
+		plugin.Parse([]byte(benchmarkData))
 	}
 }

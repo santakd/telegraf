@@ -1,6 +1,13 @@
 # File Output Plugin
 
-This plugin writes telegraf metrics to files
+This plugin writes metrics to one or more local files in one of the supported
+[data formats][data_formats].
+
+⭐ Telegraf v0.10.3
+🏷️ system
+💻 all
+
+[data_formats]: /docs/DATA_FORMATS_OUTPUT.md
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -42,7 +49,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## https://github.com/influxdata/telegraf/blob/master/docs/DATA_FORMATS_OUTPUT.md
   data_format = "influx"
 
-  ## Compress output data with the specifed algorithm.
+  ## Compress output data with the specified algorithm.
   ## If empty, compression will be disabled and files will be plain text.
   ## Supported algorithms are "zstd", "gzip" and "zlib".
   # compression_algorithm = ""

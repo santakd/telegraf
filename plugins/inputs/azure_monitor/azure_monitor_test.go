@@ -3,16 +3,20 @@ package azure_monitor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"testing"
 
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/influxdata/toml"
 	receiver "github.com/logzio/azure-monitor-metrics-receiver"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/testutil"
 )
 
 type mockAzureClientsManager struct{}
@@ -23,7 +27,7 @@ type mockAzureMetricDefinitionsClient struct{}
 
 type mockAzureMetricsClient struct{}
 
-func (mam *mockAzureClientsManager) createAzureClients(_ string, _ string, _ string, _ string) (*receiver.AzureClients, error) {
+func (mam *mockAzureClientsManager) createAzureClients(_, _, _, _ string, _ azcore.ClientOptions) (*receiver.AzureClients, error) {
 	return &receiver.AzureClients{
 		Ctx:                     context.Background(),
 		ResourcesClient:         &mockAzureResourcesClient{},
@@ -98,7 +102,7 @@ func (marc *mockAzureResourcesClient) ListByResourceGroup(
 		return responses, nil
 	}
 
-	return nil, fmt.Errorf("resouce group was not found")
+	return nil, errors.New("resource group was not found")
 }
 
 func (mamdc *mockAzureMetricDefinitionsClient) List(
@@ -139,7 +143,7 @@ func (mamdc *mockAzureMetricDefinitionsClient) List(
 		}, nil
 	}
 
-	return armmonitor.MetricDefinitionsClientListResponse{}, fmt.Errorf("resource ID was not found")
+	return armmonitor.MetricDefinitionsClientListResponse{}, errors.New("resource ID was not found")
 }
 
 func (mamc *mockAzureMetricsClient) List(
@@ -192,7 +196,7 @@ func (mamc *mockAzureMetricsClient) List(
 		}, nil
 	}
 
-	return armmonitor.MetricsClientListResponse{}, fmt.Errorf("resource ID was not found")
+	return armmonitor.MetricsClientListResponse{}, errors.New("resource ID was not found")
 }
 
 func TestInit_ResourceTargetsOnly(t *testing.T) {
@@ -610,51 +614,6 @@ func TestInit_NoSubscriptionID(t *testing.T) {
 	require.Error(t, am.Init())
 }
 
-func TestInit_NoClientID(t *testing.T) {
-	file, err := os.ReadFile("testdata/toml/init_no_client_id.toml")
-	require.NoError(t, err)
-	require.NotNil(t, file)
-	require.NotEmpty(t, file)
-
-	var am *AzureMonitor
-	require.NoError(t, toml.Unmarshal(file, &am))
-
-	am.Log = testutil.Logger{}
-	am.azureManager = &mockAzureClientsManager{}
-
-	require.Error(t, am.Init())
-}
-
-func TestInit_NoClientSecret(t *testing.T) {
-	file, err := os.ReadFile("testdata/toml/init_no_client_secret.toml")
-	require.NoError(t, err)
-	require.NotNil(t, file)
-	require.NotEmpty(t, file)
-
-	var am *AzureMonitor
-	require.NoError(t, toml.Unmarshal(file, &am))
-
-	am.Log = testutil.Logger{}
-	am.azureManager = &mockAzureClientsManager{}
-
-	require.Error(t, am.Init())
-}
-
-func TestInit_NoTenantID(t *testing.T) {
-	file, err := os.ReadFile("testdata/toml/init_no_tenant_id.toml")
-	require.NoError(t, err)
-	require.NotNil(t, file)
-	require.NotEmpty(t, file)
-
-	var am *AzureMonitor
-	require.NoError(t, toml.Unmarshal(file, &am))
-
-	am.Log = testutil.Logger{}
-	am.azureManager = &mockAzureClientsManager{}
-
-	require.Error(t, am.Init())
-}
-
 func TestInit_NoTargets(t *testing.T) {
 	file, err := os.ReadFile("testdata/toml/init_no_targets.toml")
 	require.NoError(t, err)
@@ -950,23 +909,21 @@ func TestGather_Success(t *testing.T) {
 
 	am.Log = testutil.Logger{}
 	am.azureManager = &mockAzureClientsManager{}
-
 	resourceTargets := make([]*receiver.ResourceTarget, 0, len(am.ResourceTargets))
 	for _, target := range am.ResourceTargets {
 		resourceTargets = append(resourceTargets, receiver.NewResourceTarget(target.ResourceID, target.Metrics, target.Aggregations))
 	}
 
+	var clientOptions = azcore.ClientOptions{Cloud: cloud.AzurePublic}
+
 	var azureClients *receiver.AzureClients
-	azureClients, err = am.azureManager.createAzureClients(am.SubscriptionID, am.ClientID, am.ClientSecret, am.TenantID)
+	azureClients, err = am.azureManager.createAzureClients(am.SubscriptionID, am.ClientID, am.ClientSecret, am.TenantID, clientOptions)
 	require.NoError(t, err)
 	require.NotNil(t, azureClients)
 
 	am.receiver, err = receiver.NewAzureMonitorMetricsReceiver(
 		am.SubscriptionID,
-		am.ClientID,
-		am.ClientSecret,
-		am.TenantID,
-		receiver.NewTargets(resourceTargets, []*receiver.ResourceGroupTarget{}, []*receiver.Resource{}),
+		receiver.NewTargets(resourceTargets, nil, nil),
 		azureClients,
 	)
 	require.NoError(t, err)
@@ -1025,4 +982,103 @@ func TestGather_Success(t *testing.T) {
 	acc.AssertContainsTaggedFields(t, expectedResource1Metric2Name, expectedResource1Metric2MetricFields, expectedResource1MetricsTags)
 	acc.AssertContainsTaggedFields(t, expectedResource2Metric1Name, expectedResource2Metric1MetricFields, expectedResource2MetricsTags)
 	acc.AssertContainsTaggedFields(t, expectedResource3Metric1Name, expectedResource3Metric1MetricFields, expectedResource3MetricsTags)
+}
+
+func TestGather_China_Success(t *testing.T) {
+	file, err := os.ReadFile("testdata/toml/gather_success_cloud_option_china.toml")
+	require.NoError(t, err)
+	require.NotNil(t, file)
+	require.NotEmpty(t, file)
+
+	var am *AzureMonitor
+	require.NoError(t, toml.Unmarshal(file, &am))
+
+	am.Log = testutil.Logger{}
+	am.azureManager = &mockAzureClientsManager{}
+
+	resourceTargets := make([]*receiver.ResourceTarget, 0, len(am.ResourceTargets))
+	for _, target := range am.ResourceTargets {
+		resourceTargets = append(resourceTargets, receiver.NewResourceTarget(target.ResourceID, target.Metrics, target.Aggregations))
+	}
+
+	var clientOptions = azcore.ClientOptions{Cloud: cloud.AzureChina}
+
+	var azureClients *receiver.AzureClients
+	azureClients, err = am.azureManager.createAzureClients(am.SubscriptionID, am.ClientID, am.ClientSecret, am.TenantID, clientOptions)
+	require.NoError(t, err)
+	require.NotNil(t, azureClients)
+
+	am.receiver, err = receiver.NewAzureMonitorMetricsReceiver(
+		am.SubscriptionID,
+		receiver.NewTargets(resourceTargets, nil, nil),
+		azureClients,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, am.receiver)
+}
+
+func TestGather_Government_Success(t *testing.T) {
+	file, err := os.ReadFile("testdata/toml/gather_success_cloud_option_government.toml")
+	require.NoError(t, err)
+	require.NotNil(t, file)
+	require.NotEmpty(t, file)
+
+	var am *AzureMonitor
+	require.NoError(t, toml.Unmarshal(file, &am))
+
+	am.Log = testutil.Logger{}
+	am.azureManager = &mockAzureClientsManager{}
+
+	resourceTargets := make([]*receiver.ResourceTarget, 0, len(am.ResourceTargets))
+	for _, target := range am.ResourceTargets {
+		resourceTargets = append(resourceTargets, receiver.NewResourceTarget(target.ResourceID, target.Metrics, target.Aggregations))
+	}
+
+	var clientOptions = azcore.ClientOptions{Cloud: cloud.AzureGovernment}
+
+	var azureClients *receiver.AzureClients
+	azureClients, err = am.azureManager.createAzureClients(am.SubscriptionID, am.ClientID, am.ClientSecret, am.TenantID, clientOptions)
+	require.NoError(t, err)
+	require.NotNil(t, azureClients)
+
+	am.receiver, err = receiver.NewAzureMonitorMetricsReceiver(
+		am.SubscriptionID,
+		receiver.NewTargets(resourceTargets, nil, nil),
+		azureClients,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, am.receiver)
+}
+
+func TestGather_Public_Success(t *testing.T) {
+	file, err := os.ReadFile("testdata/toml/gather_success_cloud_option_public.toml")
+	require.NoError(t, err)
+	require.NotNil(t, file)
+	require.NotEmpty(t, file)
+
+	var am *AzureMonitor
+	require.NoError(t, toml.Unmarshal(file, &am))
+
+	am.Log = testutil.Logger{}
+	am.azureManager = &mockAzureClientsManager{}
+
+	resourceTargets := make([]*receiver.ResourceTarget, 0, len(am.ResourceTargets))
+	for _, target := range am.ResourceTargets {
+		resourceTargets = append(resourceTargets, receiver.NewResourceTarget(target.ResourceID, target.Metrics, target.Aggregations))
+	}
+
+	var clientOptions = azcore.ClientOptions{Cloud: cloud.AzurePublic}
+
+	var azureClients *receiver.AzureClients
+	azureClients, err = am.azureManager.createAzureClients(am.SubscriptionID, am.ClientID, am.ClientSecret, am.TenantID, clientOptions)
+	require.NoError(t, err)
+	require.NotNil(t, azureClients)
+
+	am.receiver, err = receiver.NewAzureMonitorMetricsReceiver(
+		am.SubscriptionID,
+		receiver.NewTargets(resourceTargets, nil, nil),
+		azureClients,
+	)
+	require.NoError(t, err)
+	require.NotNil(t, am.receiver)
 }

@@ -33,7 +33,7 @@ type request struct {
 func newRequest(reqID uint16, flags uint8) *request {
 	r := &request{
 		reqID:    reqID,
-		params:   map[string]string{},
+		params:   make(map[string]string),
 		keepConn: flags&flagKeepConn != 0,
 	}
 	r.rawParams = r.buf[:0]
@@ -112,8 +112,10 @@ func (r *response) WriteHeader(code int) {
 	}
 
 	fmt.Fprintf(r.w, "Status: %d %s\r\n", code, http.StatusText(code))
-	_ = r.header.Write(r.w)
-	_, _ = r.w.WriteString("\r\n")
+	//nolint:errcheck // unable to propagate
+	r.header.Write(r.w)
+	//nolint:errcheck // unable to propagate
+	r.w.WriteString("\r\n")
 }
 
 func (r *response) Flush() {
@@ -247,9 +249,7 @@ func (c *child) handleRecord(rec *record) error {
 			return err
 		}
 		if req.pw != nil {
-			if err := req.pw.CloseWithError(ErrRequestAborted); err != nil {
-				return err
-			}
+			req.pw.CloseWithError(ErrRequestAborted)
 		}
 		if !req.keepConn {
 			// connection will close upon return

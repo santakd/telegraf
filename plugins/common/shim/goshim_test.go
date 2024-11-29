@@ -4,13 +4,13 @@ import (
 	"bufio"
 	"errors"
 	"io"
-	"log"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/logger"
 )
 
 func TestShimSetsUpLogger(t *testing.T) {
@@ -31,9 +31,9 @@ func TestShimSetsUpLogger(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func runErroringInputPlugin(t *testing.T, interval time.Duration, stdin io.Reader, stdout, stderr io.Writer) (metricProcessed chan bool, exited chan bool) {
-	metricProcessed = make(chan bool, 1)
-	exited = make(chan bool, 1)
+func runErroringInputPlugin(t *testing.T, interval time.Duration, stdin io.Reader, stdout, stderr io.Writer) (chan bool, chan bool) {
+	metricProcessed := make(chan bool, 1)
+	exited := make(chan bool, 1)
 	inp := &erroringInput{}
 
 	shim := New()
@@ -45,13 +45,14 @@ func runErroringInputPlugin(t *testing.T, interval time.Duration, stdin io.Reade
 	}
 	if stderr != nil {
 		shim.stderr = stderr
-		log.SetOutput(stderr)
+		logger.RedirectLogging(stderr)
 	}
 	err := shim.AddInput(inp)
 	require.NoError(t, err)
 	go func() {
-		err := shim.Run(interval)
-		require.NoError(t, err)
+		if err := shim.Run(interval); err != nil {
+			t.Error(err)
+		}
 		exited <- true
 	}()
 	return metricProcessed, exited

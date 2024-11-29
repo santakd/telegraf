@@ -19,6 +19,7 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -330,7 +331,6 @@ var testEsAggregationData = []esAggregationQueryTest{
 			FilterQuery:     "response: 200",
 			DateField:       "@timestamp",
 			QueryPeriod:     queryPeriod,
-			Tags:            []string{},
 			mapMetricFields: map[string]string{},
 		},
 		nil,
@@ -356,7 +356,6 @@ var testEsAggregationData = []esAggregationQueryTest{
 			MetricFunction:  "max",
 			DateField:       "@timestamp",
 			QueryPeriod:     queryPeriod,
-			Tags:            []string{},
 			mapMetricFields: map[string]string{"size": "long"},
 		},
 		[]aggregationQueryData{
@@ -387,7 +386,6 @@ var testEsAggregationData = []esAggregationQueryTest{
 			MetricFunction:  "average",
 			DateField:       "@timestamp",
 			QueryPeriod:     queryPeriod,
-			Tags:            []string{},
 			mapMetricFields: map[string]string{"size": "long"},
 		},
 		nil,
@@ -404,7 +402,6 @@ var testEsAggregationData = []esAggregationQueryTest{
 			MetricFields:    []string{"none"},
 			DateField:       "@timestamp",
 			QueryPeriod:     queryPeriod,
-			Tags:            []string{},
 			mapMetricFields: map[string]string{},
 		},
 		nil,
@@ -420,7 +417,6 @@ var testEsAggregationData = []esAggregationQueryTest{
 			MeasurementName: "measurement11",
 			DateField:       "@timestamp",
 			QueryPeriod:     queryPeriod,
-			Tags:            []string{},
 			mapMetricFields: map[string]string{},
 		},
 		nil,
@@ -438,7 +434,6 @@ var testEsAggregationData = []esAggregationQueryTest{
 			MetricFunction:  "avg",
 			DateField:       "@notatimestamp",
 			QueryPeriod:     queryPeriod,
-			Tags:            []string{},
 			mapMetricFields: map[string]string{"size": "long"},
 		},
 		[]aggregationQueryData{
@@ -495,7 +490,6 @@ var testEsAggregationData = []esAggregationQueryTest{
 			DateField:       "@timestamp",
 			DateFieldFormat: "yyyy",
 			QueryPeriod:     queryPeriod,
-			Tags:            []string{},
 			mapMetricFields: map[string]string{},
 		},
 		nil,
@@ -536,9 +530,12 @@ func setupIntegrationTest(t *testing.T) (*testutil.Container, error) {
 		"http://%s:%s", container.Address, container.Ports[servicePort],
 	)
 	e := &ElasticsearchQuery{
-		URLs:    []string{url},
-		Timeout: config.Duration(time.Second * 30),
-		Log:     testutil.Logger{},
+		URLs: []string{url},
+		HTTPClientConfig: common_http.HTTPClientConfig{
+			ResponseHeaderTimeout: config.Duration(30 * time.Second),
+			Timeout:               config.Duration(30 * time.Second),
+		},
+		Log: testutil.Logger{},
 	}
 
 	err = e.connectToES()
@@ -560,8 +557,10 @@ func setupIntegrationTest(t *testing.T) (*testutil.Container, error) {
 
 	for scanner.Scan() {
 		parts := strings.Split(scanner.Text(), " ")
-		size, _ := strconv.Atoi(parts[9])
-		responseTime, _ := strconv.Atoi(parts[len(parts)-1])
+		size, err := strconv.Atoi(parts[9])
+		require.NoError(t, err)
+		responseTime, err := strconv.Atoi(parts[len(parts)-1])
+		require.NoError(t, err)
 
 		logline := nginxlog{
 			IPaddress:    parts[0],
@@ -612,8 +611,11 @@ func TestElasticsearchQueryIntegration(t *testing.T) {
 		URLs: []string{
 			fmt.Sprintf("http://%s:%s", container.Address, container.Ports[servicePort]),
 		},
-		Timeout: config.Duration(time.Second * 30),
-		Log:     testutil.Logger{},
+		HTTPClientConfig: common_http.HTTPClientConfig{
+			ResponseHeaderTimeout: config.Duration(30 * time.Second),
+			Timeout:               config.Duration(30 * time.Second),
+		},
+		Log: testutil.Logger{},
 	}
 
 	err = e.connectToES()
@@ -675,8 +677,11 @@ func TestElasticsearchQueryIntegration_getMetricFields(t *testing.T) {
 		URLs: []string{
 			fmt.Sprintf("http://%s:%s", container.Address, container.Ports[servicePort]),
 		},
-		Timeout: config.Duration(time.Second * 30),
-		Log:     testutil.Logger{},
+		HTTPClientConfig: common_http.HTTPClientConfig{
+			ResponseHeaderTimeout: config.Duration(30 * time.Second),
+			Timeout:               config.Duration(30 * time.Second),
+		},
+		Log: testutil.Logger{},
 	}
 
 	err = e.connectToES()

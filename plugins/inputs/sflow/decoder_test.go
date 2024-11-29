@@ -14,7 +14,7 @@ import (
 
 func TestIPv4SW(t *testing.T) {
 	str := `00000005` + // version
-		`00000001` + //address type
+		`00000001` + // address type
 		`c0a80102` + // ip address
 		`00000010` + // sub agent id
 		`0000f3d4` + // sequence number
@@ -64,9 +64,9 @@ func TestIPv4SW(t *testing.T) {
 	packet, err := hex.DecodeString(str)
 	require.NoError(t, err)
 
-	actual := []telegraf.Metric{}
-	dc := NewDecoder()
-	dc.OnPacket(func(p *V5Format) {
+	actual := make([]telegraf.Metric, 0)
+	dc := newDecoder()
+	dc.OnPacket(func(p *v5Format) {
 		metrics := makeMetrics(p)
 		actual = append(actual, metrics...)
 	})
@@ -160,7 +160,7 @@ func BenchmarkDecodeIPv4SW(b *testing.B) {
 	)
 	require.NoError(b, err)
 
-	dc := NewDecoder()
+	dc := newDecoder()
 	require.NoError(b, err)
 
 	b.ResetTimer()
@@ -188,7 +188,7 @@ func TestExpandFlow(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	dc := NewDecoder()
+	dc := newDecoder()
 	p, err := dc.DecodeOnePacket(bytes.NewBuffer(packet))
 	require.NoError(t, err)
 	actual := makeMetrics(p)
@@ -329,7 +329,7 @@ func TestIPv4SWRT(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	dc := NewDecoder()
+	dc := newDecoder()
 	p, err := dc.DecodeOnePacket(bytes.NewBuffer(packet))
 	require.NoError(t, err)
 	actual := makeMetrics(p)
@@ -556,7 +556,7 @@ func TestIPv6SW(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	dc := NewDecoder()
+	dc := newDecoder()
 	p, err := dc.DecodeOnePacket(bytes.NewBuffer(packet))
 	require.NoError(t, err)
 	actual := makeMetrics(p)
@@ -627,7 +627,7 @@ func TestExpandFlowCounter(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	dc := NewDecoder()
+	dc := newDecoder()
 	p, err := dc.DecodeOnePacket(bytes.NewBuffer(packet))
 	require.NoError(t, err)
 	actual := makeMetrics(p)
@@ -829,12 +829,12 @@ func TestFlowExpandCounter(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	dc := NewDecoder()
+	dc := newDecoder()
 	p, err := dc.DecodeOnePacket(bytes.NewBuffer(packet))
 	require.NoError(t, err)
 	actual := makeMetrics(p)
 
 	// we don't do anything with samples yet
-	expected := []telegraf.Metric{}
+	expected := make([]telegraf.Metric, 0)
 	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime())
 }

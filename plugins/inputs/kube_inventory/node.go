@@ -9,7 +9,7 @@ import (
 )
 
 func collectNodes(ctx context.Context, acc telegraf.Accumulator, ki *KubernetesInventory) {
-	list, err := ki.client.getNodes(ctx)
+	list, err := ki.client.getNodes(ctx, ki.NodeName)
 	if err != nil {
 		acc.AddError(err)
 		return
@@ -17,20 +17,20 @@ func collectNodes(ctx context.Context, acc telegraf.Accumulator, ki *KubernetesI
 
 	ki.gatherNodeCount(len(list.Items), acc)
 
-	for _, n := range list.Items {
-		ki.gatherNode(n, acc)
+	for i := range list.Items {
+		ki.gatherNode(&list.Items[i], acc)
 	}
 }
 
 func (ki *KubernetesInventory) gatherNodeCount(count int, acc telegraf.Accumulator) {
 	fields := map[string]interface{}{"node_count": count}
-	tags := map[string]string{}
+	tags := make(map[string]string)
 
 	acc.AddFields(nodeMeasurement, fields, tags)
 }
 
-func (ki *KubernetesInventory) gatherNode(n corev1.Node, acc telegraf.Accumulator) {
-	fields := map[string]interface{}{}
+func (ki *KubernetesInventory) gatherNode(n *corev1.Node, acc telegraf.Accumulator) {
+	fields := make(map[string]interface{}, len(n.Status.Capacity)+len(n.Status.Allocatable)+1)
 	tags := map[string]string{
 		"node_name":         n.Name,
 		"cluster_namespace": n.Annotations["cluster.x-k8s.io/cluster-namespace"],
@@ -62,7 +62,6 @@ func (ki *KubernetesInventory) gatherNode(n corev1.Node, acc telegraf.Accumulato
 	}
 
 	for _, val := range n.Status.Conditions {
-		conditionfields := map[string]interface{}{}
 		conditiontags := map[string]string{
 			"status":    string(val.Status),
 			"condition": string(val.Type),
@@ -83,8 +82,10 @@ func (ki *KubernetesInventory) gatherNode(n corev1.Node, acc telegraf.Accumulato
 			}
 			running = 2
 		}
-		conditionfields["status_condition"] = running
-		conditionfields["ready"] = nodeready
+		conditionfields := map[string]interface{}{
+			"status_condition": running,
+			"ready":            nodeready,
+		}
 		acc.AddFields(nodeMeasurement, conditionfields, conditiontags)
 	}
 

@@ -452,7 +452,9 @@ func TestAerospikeParseValue(t *testing.T) {
 	require.Equal(t, uint64(18446744041841121751), val)
 
 	val = parseAerospikeValue("", "true")
-	require.Equal(t, true, val)
+	v, ok := val.(bool)
+	require.Truef(t, ok, "bool type expected, got '%T' with '%v' value instead", val, val)
+	require.True(t, v)
 
 	// int values
 	val = parseAerospikeValue("", "42")
@@ -471,7 +473,7 @@ func TestAerospikeParseValue(t *testing.T) {
 	require.Equal(t, `1992929191`, val, "must be left as a string")
 }
 
-func FindTagValue(acc *testutil.Accumulator, measurement string, key string, value string) bool {
+func FindTagValue(acc *testutil.Accumulator, measurement, key, value string) bool {
 	for _, p := range acc.Metrics {
 		if p.Measurement == measurement {
 			v, ok := p.Tags[key]

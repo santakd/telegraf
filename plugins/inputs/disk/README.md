@@ -1,10 +1,17 @@
 # Disk Input Plugin
 
-The disk input plugin gathers metrics about disk usage.
+This plugin gathers metrics about disk usage.
 
-Note that `used_percent` is calculated by doing `used / (used + free)`, _not_
-`used / total`, which is how the unix `df` command does it. See
-[wikipedia - df](https://en.wikipedia.org/wiki/Df_(Unix)) for more details.
+> [!NOTE]
+> The `used_percent` field is calculated by `used / (used + free)` and _not_
+> `used / total` as the unix `df` command does it. See [wikipedia - df][wiki_df]
+> for more details.
+
+⭐ Telegraf v0.1.1
+🏷️ system
+💻 all
+
+[wiki_df]: https://en.wikipedia.org/wiki/Df_(Unix)
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -63,6 +70,7 @@ docker run -v /:/hostfs:ro -e HOST_MOUNT_PREFIX=/hostfs -e HOST_PROC=/hostfs/pro
     - inodes_free (integer, files)
     - inodes_total (integer, files)
     - inodes_used (integer, files)
+    - inodes_used_percent (float, percent)
 
 ## Troubleshooting
 
@@ -85,11 +93,11 @@ sudo setfacl -R -m u:telegraf:X /var/lib/docker/volumes/
 ## Example Output
 
 ```text
-disk,fstype=hfs,mode=ro,path=/ free=398407520256i,inodes_free=97267461i,inodes_total=121847806i,inodes_used=24580345i,total=499088621568i,used=100418957312i,used_percent=20.131039916242397 1453832006274071563
-disk,fstype=devfs,mode=rw,path=/dev free=0i,inodes_free=0i,inodes_total=628i,inodes_used=628i,total=185856i,used=185856i,used_percent=100 1453832006274137913
-disk,fstype=autofs,mode=rw,path=/net free=0i,inodes_free=0i,inodes_total=0i,inodes_used=0i,total=0i,used=0i,used_percent=0 1453832006274157077
-disk,fstype=autofs,mode=rw,path=/home free=0i,inodes_free=0i,inodes_total=0i,inodes_used=0i,total=0i,used=0i,used_percent=0 1453832006274169688
-disk,device=dm-1,fstype=xfs,label=lvg-lv,mode=rw,path=/mnt inodes_free=8388605i,inodes_used=3i,total=17112760320i,free=16959598592i,used=153161728i,used_percent=0.8950147441789215,inodes_total=8388608i 1677001387000000000
+disk,fstype=hfs,mode=ro,path=/ free=398407520256i,inodes_free=97267461i,inodes_total=121847806i,inodes_used=24580345i,total=499088621568i,used=100418957312i,used_percent=20.131039916242397,inodes_used_percent=20.1729894 1453832006274071563
+disk,fstype=devfs,mode=rw,path=/dev free=0i,inodes_free=0i,inodes_total=628i,inodes_used=628i,total=185856i,used=185856i,used_percent=100,inodes_used_percent=100 1453832006274137913
+disk,fstype=autofs,mode=rw,path=/net free=0i,inodes_free=0i,inodes_total=0i,inodes_used=0i,total=0i,used=0i,used_percent=0,inodes_used_percent=0 1453832006274157077
+disk,fstype=autofs,mode=rw,path=/home free=0i,inodes_free=0i,inodes_total=0i,inodes_used=0i,total=0i,used=0i,used_percent=0,inodes_used_percent=0 1453832006274169688
+disk,device=dm-1,fstype=xfs,label=lvg-lv,mode=rw,path=/mnt inodes_free=8388605i,inodes_used=3i,total=17112760320i,free=16959598592i,used=153161728i,used_percent=0.8950147441789215,inodes_total=8388608i,inodes_used_percent=0.0017530778 1677001387000000000
 ```
 
 [statfs]: http://man7.org/linux/man-pages/man2/statfs.2.html

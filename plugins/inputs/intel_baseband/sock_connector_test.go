@@ -3,14 +3,14 @@
 package intel_baseband
 
 import (
-	"fmt"
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
-	"github.com/influxdata/telegraf/plugins/inputs/intel_baseband/mock"
+	"github.com/influxdata/telegraf/plugins/inputs/intel_baseband/mocks"
 )
 
 func TestWriteCommandToSocket(t *testing.T) {
@@ -36,7 +36,7 @@ func TestWriteCommandToSocket(t *testing.T) {
 
 	t.Run("handling timeout setting error", func(t *testing.T) {
 		conn := &mocks.Conn{}
-		conn.On("SetWriteDeadline", mock.Anything).Return(fmt.Errorf("deadline set error"))
+		conn.On("SetWriteDeadline", mock.Anything).Return(errors.New("deadline set error"))
 		connector := socketConnector{connection: conn}
 
 		err := connector.writeCommandToSocket(0x00)
@@ -50,7 +50,7 @@ func TestWriteCommandToSocket(t *testing.T) {
 	t.Run("handling net.Write error", func(t *testing.T) {
 		var unsupportedCommand byte = 0x99
 		conn := &mocks.Conn{}
-		conn.On("Write", []byte{unsupportedCommand, 0x00}).Return(0, fmt.Errorf("unsupported command"))
+		conn.On("Write", []byte{unsupportedCommand, 0x00}).Return(0, errors.New("unsupported command"))
 		conn.On("SetWriteDeadline", mock.Anything).Return(nil)
 		connector := socketConnector{connection: conn}
 
@@ -68,7 +68,7 @@ func TestDumpTelemetryToLog(t *testing.T) {
 		tempSocket := newTempSocket(t)
 		defer tempSocket.Close()
 		tempLogFile := newTempLogFile(t)
-		defer tempLogFile.Close()
+		defer tempLogFile.close()
 		connector := newSocketConnector(tempSocket.pathToSocket, 5*time.Second)
 
 		err := connector.dumpTelemetryToLog()

@@ -11,7 +11,7 @@ import (
 type Creator func() Serializer
 
 // Serializers contains the registry of all known serializers (following the new style)
-var Serializers = map[string]Creator{}
+var Serializers = make(map[string]Creator)
 
 // Add adds a serializer to the registry. Usually this function is called in the plugin's init function
 func Add(name string, creator Creator) {
@@ -93,6 +93,9 @@ type Config struct {
 
 	// Support unsigned integer output; influx format only
 	InfluxUintSupport bool `toml:"influx_uint_support"`
+
+	// Omit timestamp from output; influx format only
+	InfluxOmitTimestamp bool `toml:"influx_omit_timestamp"`
 
 	// Prefix to add to all measurements, only supports Graphite
 	Prefix string `toml:"prefix"`

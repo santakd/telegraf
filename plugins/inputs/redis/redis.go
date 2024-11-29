@@ -281,7 +281,7 @@ func (r *Redis) connect() error {
 			},
 		)
 
-		tags := map[string]string{}
+		tags := make(map[string]string, 2)
 		if u.Scheme == "unix" {
 			tags["socket"] = u.Path
 		} else {
@@ -415,6 +415,11 @@ func gatherInfoOutput(
 				gatherCommandstateLine(name, kline, acc, tags)
 				continue
 			}
+			if section == "Latencystats" {
+				kline := strings.TrimSpace(parts[1])
+				gatherLatencystatsLine(name, kline, acc, tags)
+				continue
+			}
 			if section == "Replication" && replicationSlaveMetricPrefix.MatchString(name) {
 				kline := strings.TrimSpace(parts[1])
 				gatherReplicationLine(name, kline, acc, tags)
@@ -485,12 +490,7 @@ func gatherInfoOutput(
 //	db0:keys=2,expires=0,avg_ttl=0
 //
 // And there is one for each db on the redis instance
-func gatherKeyspaceLine(
-	name string,
-	line string,
-	acc telegraf.Accumulator,
-	globalTags map[string]string,
-) {
+func gatherKeyspaceLine(name, line string, acc telegraf.Accumulator, globalTags map[string]string) {
 	if strings.Contains(line, "keys=") {
 		fields := make(map[string]interface{})
 		tags := make(map[string]string)
@@ -515,13 +515,8 @@ func gatherKeyspaceLine(
 //
 //	cmdstat_publish:calls=33791,usec=208789,usec_per_call=6.18
 //
-// Tag: cmdstat=publish; Fields: calls=33791i,usec=208789i,usec_per_call=6.18
-func gatherCommandstateLine(
-	name string,
-	line string,
-	acc telegraf.Accumulator,
-	globalTags map[string]string,
-) {
+// Tag: command=publish; Fields: calls=33791i,usec=208789i,usec_per_call=6.18
+func gatherCommandstateLine(name, line string, acc telegraf.Accumulator, globalTags map[string]string) {
 	if !strings.HasPrefix(name, "cmdstat") {
 		return
 	}
@@ -557,18 +552,48 @@ func gatherCommandstateLine(
 	acc.AddFields("redis_cmdstat", fields, tags)
 }
 
+// Parse the special latency_percentiles_usec lines.
+// Example:
+//
+//	latency_percentiles_usec_zadd:p50=9.023,p99=28.031,p99.9=43.007
+//
+// Tag: command=zadd; Fields: p50=9.023,p99=28.031,p99.9=43.007
+func gatherLatencystatsLine(name, line string, acc telegraf.Accumulator, globalTags map[string]string) {
+	if !strings.HasPrefix(name, "latency_percentiles_usec") {
+		return
+	}
+
+	fields := make(map[string]interface{})
+	tags := make(map[string]string)
+	for k, v := range globalTags {
+		tags[k] = v
+	}
+	tags["command"] = strings.TrimPrefix(name, "latency_percentiles_usec_")
+	parts := strings.Split(line, ",")
+	for _, part := range parts {
+		kv := strings.Split(part, "=")
+		if len(kv) != 2 {
+			continue
+		}
+
+		switch kv[0] {
+		case "p50", "p99", "p99.9":
+			fval, err := strconv.ParseFloat(kv[1], 64)
+			if err == nil {
+				fields[kv[0]] = fval
+			}
+		}
+	}
+	acc.AddFields("redis_latency_percentiles_usec", fields, tags)
+}
+
 // Parse the special Replication line
 // Example:
 //
 //	slave0:ip=127.0.0.1,port=7379,state=online,offset=4556468,lag=0
 //
 // This line will only be visible when a node has a replica attached.
-func gatherReplicationLine(
-	name string,
-	line string,
-	acc telegraf.Accumulator,
-	globalTags map[string]string,
-) {
+func gatherReplicationLine(name, line string, acc telegraf.Accumulator, globalTags map[string]string) {
 	fields := make(map[string]interface{})
 	tags := make(map[string]string)
 	for k, v := range globalTags {
@@ -608,23 +633,25 @@ func gatherReplicationLine(
 //
 // errorstat_ERR:count=37
 // errorstat_MOVED:count=3626
-func gatherErrorstatsLine(
-	name string,
-	line string,
-	acc telegraf.Accumulator,
-	globalTags map[string]string,
-) {
+func gatherErrorstatsLine(name, line string, acc telegraf.Accumulator, globalTags map[string]string) {
 	tags := make(map[string]string, len(globalTags)+1)
 	for k, v := range globalTags {
 		tags[k] = v
 	}
 	tags["err"] = strings.TrimPrefix(name, "errorstat_")
 	kv := strings.Split(line, "=")
-	ival, err := strconv.ParseInt(kv[1], 10, 64)
-	if err == nil {
-		fields := map[string]interface{}{"total": ival}
-		acc.AddFields("redis_errorstat", fields, tags)
+	if len(kv) < 2 {
+		acc.AddError(fmt.Errorf("invalid line for %q: %s", name, line))
+		return
 	}
+	ival, err := strconv.ParseInt(kv[1], 10, 64)
+	if err != nil {
+		acc.AddError(fmt.Errorf("parsing value in line %q failed: %w", line, err))
+		return
+	}
+
+	fields := map[string]interface{}{"total": ival}
+	acc.AddFields("redis_errorstat", fields, tags)
 }
 
 func init() {
@@ -693,7 +720,7 @@ func coerceType(value interface{}, typ reflect.Type) reflect.Value {
 				value = float64(0)
 			}
 		default:
-			panic(fmt.Sprintf("unhandled destination type %s", typ.Kind().String()))
+			panic("unhandled destination type " + typ.Kind().String())
 		}
 	case int, int8, int16, int32, int64:
 		switch typ.Kind() {
@@ -704,7 +731,7 @@ func coerceType(value interface{}, typ reflect.Type) reflect.Value {
 		case reflect.Float64:
 			value = float64(reflect.ValueOf(sourceType).Int())
 		default:
-			panic(fmt.Sprintf("unhandled destination type %s", typ.Kind().String()))
+			panic("unhandled destination type " + typ.Kind().String())
 		}
 	case uint, uint8, uint16, uint32, uint64:
 		switch typ.Kind() {
@@ -715,7 +742,7 @@ func coerceType(value interface{}, typ reflect.Type) reflect.Value {
 		case reflect.Float64:
 			value = float64(reflect.ValueOf(sourceType).Uint())
 		default:
-			panic(fmt.Sprintf("unhandled destination type %s", typ.Kind().String()))
+			panic("unhandled destination type " + typ.Kind().String())
 		}
 	case float32, float64:
 		switch typ.Kind() {
@@ -726,18 +753,20 @@ func coerceType(value interface{}, typ reflect.Type) reflect.Value {
 		case reflect.Float64:
 			// types match
 		default:
-			panic(fmt.Sprintf("unhandled destination type %s", typ.Kind().String()))
+			panic("unhandled destination type " + typ.Kind().String())
 		}
 	case string:
 		switch typ.Kind() {
 		case reflect.String:
 			// types match
 		case reflect.Int64:
+			//nolint:errcheck // no way to propagate, shouldn't panic
 			value, _ = strconv.ParseInt(value.(string), 10, 64)
 		case reflect.Float64:
+			//nolint:errcheck // no way to propagate, shouldn't panic
 			value, _ = strconv.ParseFloat(value.(string), 64)
 		default:
-			panic(fmt.Sprintf("unhandled destination type %s", typ.Kind().String()))
+			panic("unhandled destination type " + typ.Kind().String())
 		}
 	default:
 		panic(fmt.Sprintf("unhandled source type %T", sourceType))

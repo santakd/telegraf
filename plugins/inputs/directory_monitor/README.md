@@ -1,17 +1,19 @@
 # Directory Monitor Input Plugin
 
-This plugin monitors a single directory (traversing sub-directories),
-and takes in each file placed in the directory.  The plugin will gather all
-files in the directory at the configured interval, and parse the ones that
-haven't been picked up yet.
+This plugin monitors a single directory (traversing sub-directories), and
+processes each file placed in the directory. The plugin will gather all files in
+the directory at the configured interval, and parse the ones that haven't been
+picked up yet.
 
-This plugin is intended to read files that are moved or copied to the monitored
-directory, and thus files should also not be used by another process or else
-they may fail to be gathered. Please be advised that this plugin pulls files
-directly after they've been in the directory for the length of the configurable
-`directory_duration_threshold`, and thus files should not be written 'live' to
-the monitored directory. If you absolutely must write files directly, they must
-be guaranteed to finish writing before the `directory_duration_threshold`.
+> [!NOTE]
+> Files should not be used by another process or the plugin may fail.
+> Furthermore, files should not be written _live_ to the monitored directory.
+> If you absolutely must write files directly, they must be guaranteed to finish
+> writing before `directory_duration_threshold`.
+
+⭐ Telegraf v1.18.0
+🏷️ system
+💻 all
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -30,7 +32,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## The directory to monitor and read files from (including sub-directories if "recursive" is true).
   directory = ""
   #
-  ## The directory to move finished files to (maintaining directory hierachy from source).
+  ## The directory to move finished files to (maintaining directory hierarchy from source).
   finished_directory = ""
   #
   ## Setting recursive to true will make the plugin recursively walk the directory and process all sub-directories.
@@ -46,7 +48,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   # directory_duration_threshold = "50ms"
   #
   ## A list of the only file names to monitor, if necessary. Supports regex. If left blank, all files are ingested.
-  # files_to_monitor = ["^.*\.csv"]
+  # files_to_monitor = ["^.*\\.csv"]
   #
   ## A list of files to ignore, if necessary. Supports regex.
   # files_to_ignore = [".DS_Store"]

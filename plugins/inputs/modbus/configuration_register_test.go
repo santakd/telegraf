@@ -215,12 +215,33 @@ func TestRegisterHoldingRegisters(t *testing.T) {
 		name      string
 		address   []uint16
 		quantity  uint16
+		bit       uint8
 		byteOrder string
 		dataType  string
 		scale     float64
 		write     []byte
 		read      interface{}
 	}{
+		{
+			name:      "register5_bit3",
+			address:   []uint16{5},
+			quantity:  1,
+			byteOrder: "AB",
+			dataType:  "BIT",
+			bit:       3,
+			write:     []byte{0x18, 0x0d},
+			read:      uint8(1),
+		},
+		{
+			name:      "register5_bit14",
+			address:   []uint16{5},
+			quantity:  1,
+			byteOrder: "AB",
+			dataType:  "BIT",
+			bit:       14,
+			write:     []byte{0x18, 0x0d},
+			read:      uint8(0),
+		},
 		{
 			name:      "register0_ab_float32",
 			address:   []uint16{0},
@@ -841,6 +862,24 @@ func TestRegisterHoldingRegisters(t *testing.T) {
 			write:     []byte{0x14, 0xb8},
 			read:      float64(-0.509765625),
 		},
+		{
+			name:      "register250_abcd_string",
+			address:   []uint16{250, 251, 252, 253, 254, 255, 256},
+			quantity:  7,
+			byteOrder: "AB",
+			dataType:  "STRING",
+			write:     []byte{0x4d, 0x6f, 0x64, 0x62, 0x75, 0x73, 0x20, 0x53, 0x74, 0x72, 0x69, 0x6e, 0x67, 0x00},
+			read:      "Modbus String",
+		},
+		{
+			name:      "register250_dcba_string",
+			address:   []uint16{250, 251, 252, 253, 254, 255, 256},
+			quantity:  7,
+			byteOrder: "BA",
+			dataType:  "STRING",
+			write:     []byte{0x6f, 0x4d, 0x62, 0x64, 0x73, 0x75, 0x53, 0x20, 0x72, 0x74, 0x6e, 0x69, 0x00, 0x67},
+			read:      "Modbus String",
+		},
 	}
 
 	serv := mbserver.NewServer()
@@ -870,6 +909,7 @@ func TestRegisterHoldingRegisters(t *testing.T) {
 					DataType:  hrt.dataType,
 					Scale:     hrt.scale,
 					Address:   hrt.address,
+					Bit:       hrt.bit,
 				},
 			}
 
@@ -907,7 +947,7 @@ func TestRegisterReadMultipleCoilWithHole(t *testing.T) {
 	defer handler.Close()
 	client := mb.NewClient(handler)
 
-	fcs := []fieldDefinition{}
+	fcs := make([]fieldDefinition, 0, 26)
 	expectedFields := make(map[string]interface{})
 	writeValue := uint16(0)
 	readValue := uint16(0)
@@ -992,7 +1032,7 @@ func TestRegisterReadMultipleCoilLimit(t *testing.T) {
 	defer handler.Close()
 	client := mb.NewClient(handler)
 
-	fcs := []fieldDefinition{}
+	fcs := make([]fieldDefinition, 0, 4000)
 	expectedFields := make(map[string]interface{})
 	writeValue := uint16(0)
 	readValue := uint16(0)
@@ -1051,7 +1091,7 @@ func TestRegisterReadMultipleHoldingRegisterWithHole(t *testing.T) {
 	defer handler.Close()
 	client := mb.NewClient(handler)
 
-	fcs := []fieldDefinition{}
+	fcs := make([]fieldDefinition, 0, 20)
 	expectedFields := make(map[string]interface{})
 	for i := 0; i < 10; i++ {
 		fc := fieldDefinition{
@@ -1125,7 +1165,7 @@ func TestRegisterReadMultipleHoldingRegisterLimit(t *testing.T) {
 	defer handler.Close()
 	client := mb.NewClient(handler)
 
-	fcs := []fieldDefinition{}
+	fcs := make([]fieldDefinition, 0, 401)
 	expectedFields := make(map[string]interface{})
 	for i := 0; i <= 400; i++ {
 		fc := fieldDefinition{}
@@ -1169,5 +1209,75 @@ func TestRegisterReadMultipleHoldingRegisterLimit(t *testing.T) {
 	require.NoError(t, modbus.Gather(&acc))
 	acc.Wait(len(expected))
 
+	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
+}
+
+func TestRegisterHighAddresses(t *testing.T) {
+	// Test case for issue https://github.com/influxdata/telegraf/issues/15138
+
+	// Setup a server
+	serv := mbserver.NewServer()
+	require.NoError(t, serv.ListenTCP("localhost:1502"))
+	defer serv.Close()
+
+	handler := mb.NewTCPClientHandler("localhost:1502")
+	require.NoError(t, handler.Connect())
+	defer handler.Close()
+	client := mb.NewClient(handler)
+
+	// Write the register values
+	data := []byte{
+		0x4d, 0x6f, 0x64, 0x62, 0x75, 0x73, 0x20, 0x53,
+		0x74, 0x72, 0x69, 0x6e, 0x67, 0x20, 0x48, 0x65,
+		0x6c, 0x6c, 0x6f, 0x00,
+	}
+	_, err := client.WriteMultipleRegisters(65524, 10, data)
+	require.NoError(t, err)
+	_, err = client.WriteMultipleRegisters(65534, 1, []byte{0x10, 0x92})
+	require.NoError(t, err)
+
+	modbus := Modbus{
+		Name:       "Issue-15138",
+		Controller: "tcp://localhost:1502",
+		Log:        testutil.Logger{},
+	}
+	modbus.SlaveID = 1
+	modbus.HoldingRegisters = []fieldDefinition{
+		{
+			Name:      "DeviceName",
+			ByteOrder: "AB",
+			DataType:  "STRING",
+			Address:   []uint16{65524, 65525, 65526, 65527, 65528, 65529, 65530, 65531, 65532, 65533},
+		},
+		{
+			Name:      "DeviceConnectionStatus",
+			ByteOrder: "AB",
+			DataType:  "UINT16",
+			Address:   []uint16{65534},
+			Scale:     1,
+		},
+	}
+
+	expected := []telegraf.Metric{
+		testutil.MustMetric(
+			"modbus",
+			map[string]string{
+				"type":     cHoldingRegisters,
+				"slave_id": strconv.Itoa(int(modbus.SlaveID)),
+				"name":     modbus.Name,
+			},
+			map[string]interface{}{
+				"DeviceName":             "Modbus String Hello",
+				"DeviceConnectionStatus": uint16(4242),
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, modbus.Init())
+	require.NotEmpty(t, modbus.requests)
+	require.Len(t, modbus.requests[1].holding, 1)
+	require.NoError(t, modbus.Gather(&acc))
 	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
 }

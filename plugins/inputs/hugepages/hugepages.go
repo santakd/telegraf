@@ -6,6 +6,7 @@ package hugepages
 import (
 	"bytes"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,19 +19,6 @@ import (
 
 //go:embed sample.conf
 var sampleConfig string
-
-const (
-	// path to root huge page control directory
-	rootHugepagePath = "/sys/kernel/mm/hugepages"
-	// path where per NUMA node statistics are kept
-	numaNodePath = "/sys/devices/system/node"
-	// path to the meminfo file
-	meminfoPath = "/proc/meminfo"
-
-	rootHugepages    = "root"
-	perNodeHugepages = "per_node"
-	meminfoHugepages = "meminfo"
-)
 
 var (
 	newlineByte = []byte("\n")
@@ -62,6 +50,19 @@ var (
 		"ShmemHugePages":  "shared_kb",
 		"FileHugePages":   "file_kb",
 	}
+)
+
+const (
+	// path to root huge page control directory
+	rootHugepagePath = "/sys/kernel/mm/hugepages"
+	// path where per NUMA node statistics are kept
+	numaNodePath = "/sys/devices/system/node"
+	// path to the meminfo file
+	meminfoPath = "/proc/meminfo"
+
+	rootHugepages    = "root"
+	perNodeHugepages = "per_node"
+	meminfoHugepages = "meminfo"
 )
 
 type Hugepages struct {
@@ -151,12 +152,7 @@ func (h *Hugepages) gatherStatsPerNode(acc telegraf.Accumulator) error {
 	return nil
 }
 
-func (h *Hugepages) gatherFromHugepagePath(
-	acc telegraf.Accumulator,
-	measurement, path string,
-	fileFilter map[string]string,
-	defaultTags map[string]string,
-) error {
+func (h *Hugepages) gatherFromHugepagePath(acc telegraf.Accumulator, measurement, path string, fileFilter, defaultTags map[string]string) error {
 	// read metrics from: hugepages/hugepages-*/*
 	hugepagesDirs, err := os.ReadDir(path)
 	if err != nil {
@@ -244,7 +240,7 @@ func (h *Hugepages) gatherStatsFromMeminfo(acc telegraf.Accumulator) error {
 		metrics[metricName] = fieldValue
 	}
 
-	acc.AddFields("hugepages_"+meminfoHugepages, metrics, map[string]string{})
+	acc.AddFields("hugepages_"+meminfoHugepages, metrics, make(map[string]string))
 	return nil
 }
 
@@ -258,7 +254,7 @@ func (h *Hugepages) parseHugepagesConfig() error {
 
 	// empty array
 	if len(h.Types) == 0 {
-		return fmt.Errorf("plugin was configured with nothing to read")
+		return errors.New("plugin was configured with nothing to read")
 	}
 
 	for _, hugepagesType := range h.Types {

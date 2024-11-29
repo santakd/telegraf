@@ -2,16 +2,16 @@ package agent
 
 import (
 	"bytes"
-	"fmt"
-	"log"
+	"errors"
 	"os"
 	"testing"
 	"time"
 
-	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/models"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/logger"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func TestAddFields(t *testing.T) {
@@ -32,7 +32,7 @@ func TestAddFields(t *testing.T) {
 	actual, ok := testm.GetField("usage")
 
 	require.True(t, ok)
-	require.Equal(t, float64(99), actual)
+	require.InDelta(t, float64(99), actual, testutil.DefaultDelta)
 
 	actual, ok = testm.GetTag("foo")
 	require.True(t, ok)
@@ -48,25 +48,25 @@ func TestAddFields(t *testing.T) {
 
 func TestAccAddError(t *testing.T) {
 	errBuf := bytes.NewBuffer(nil)
-	log.SetOutput(errBuf)
-	defer log.SetOutput(os.Stderr)
+	logger.RedirectLogging(errBuf)
+	defer logger.RedirectLogging(os.Stderr)
 
 	metrics := make(chan telegraf.Metric, 10)
 	defer close(metrics)
 	a := NewAccumulator(&TestMetricMaker{}, metrics)
 
-	a.AddError(fmt.Errorf("foo"))
-	a.AddError(fmt.Errorf("bar"))
-	a.AddError(fmt.Errorf("baz"))
+	a.AddError(errors.New("foo"))
+	a.AddError(errors.New("bar"))
+	a.AddError(errors.New("baz"))
 
 	errs := bytes.Split(errBuf.Bytes(), []byte{'\n'})
 	require.Len(t, errs, 4) // 4 because of trailing newline
-	assert.Contains(t, string(errs[0]), "TestPlugin")
-	assert.Contains(t, string(errs[0]), "foo")
-	assert.Contains(t, string(errs[1]), "TestPlugin")
-	assert.Contains(t, string(errs[1]), "bar")
-	assert.Contains(t, string(errs[2]), "TestPlugin")
-	assert.Contains(t, string(errs[2]), "baz")
+	require.Contains(t, string(errs[0]), "TestPlugin")
+	require.Contains(t, string(errs[0]), "foo")
+	require.Contains(t, string(errs[1]), "TestPlugin")
+	require.Contains(t, string(errs[1]), "bar")
+	require.Contains(t, string(errs[2]), "TestPlugin")
+	require.Contains(t, string(errs[2]), "baz")
 }
 
 func TestSetPrecision(t *testing.T) {
@@ -127,7 +127,7 @@ func TestSetPrecision(t *testing.T) {
 
 func TestAddTrackingMetricGroupEmpty(t *testing.T) {
 	ch := make(chan telegraf.Metric, 10)
-	metrics := []telegraf.Metric{}
+	metrics := make([]telegraf.Metric, 0)
 	acc := NewAccumulator(&TestMetricMaker{}, ch).WithTracking(1)
 
 	id := acc.AddTrackingMetricGroup(metrics)
@@ -156,5 +156,5 @@ func (tm *TestMetricMaker) MakeMetric(metric telegraf.Metric) telegraf.Metric {
 }
 
 func (tm *TestMetricMaker) Log() telegraf.Logger {
-	return models.NewLogger("TestPlugin", "test", "")
+	return logger.New("TestPlugin", "test", "")
 }

@@ -1,9 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -351,16 +354,36 @@ func TestParseConfig(t *testing.T) {
 	}
 }
 
+func TestRemoveComments(t *testing.T) {
+	// Read expectation
+	expected, err := os.ReadFile(filepath.Join("testdata", "envvar_comments_expected.toml"))
+	require.NoError(t, err)
+
+	// Read the file and remove the comments
+	buf, err := os.ReadFile(filepath.Join("testdata", "envvar_comments.toml"))
+	require.NoError(t, err)
+	removed, err := removeComments(buf)
+	require.NoError(t, err)
+	lines := bytes.Split(removed, []byte{'\n'})
+	for i, line := range lines {
+		lines[i] = bytes.TrimRight(line, " \t")
+	}
+	actual := bytes.Join(lines, []byte{'\n'})
+
+	// Do the comparison
+	require.Equal(t, string(expected), string(actual))
+}
+
 func TestURLRetries3Fails(t *testing.T) {
 	httpLoadConfigRetryInterval = 0 * time.Second
 	responseCounter := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		responseCounter++
 	}))
 	defer ts.Close()
 
-	expected := fmt.Sprintf("error loading config file %s: retry 3 of 3 failed to retrieve remote config: 404 Not Found", ts.URL)
+	expected := fmt.Sprintf("loading config file %s failed: failed to fetch HTTP config: 404 Not Found", ts.URL)
 
 	c := NewConfig()
 	err := c.LoadConfig(ts.URL)
@@ -372,7 +395,7 @@ func TestURLRetries3Fails(t *testing.T) {
 func TestURLRetries3FailsThenPasses(t *testing.T) {
 	httpLoadConfigRetryInterval = 0 * time.Second
 	responseCounter := 0
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if responseCounter <= 2 {
 			w.WriteHeader(http.StatusNotFound)
 		} else {

@@ -1,4 +1,4 @@
-name: milestones
+name: Milestones
 on:
   pull_request_target:
     types:
@@ -15,13 +15,13 @@ jobs:
     name: Assign milestones to PRs
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Assign milestone to PR
         uses: srebhan/label-milestone-action@v1.0.1
         id: assign-milestone
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-          bugfix-labels: 'fix,chore,docs,dependencies'
+          bugfix-labels: 'fix,chore,docs,test'
           minor-labels: 'feat'
           major-labels: 'breaking change'
           fallback: 'minor'

@@ -20,10 +20,10 @@ var sampleConfig string
 type Openldap struct {
 	Host               string
 	Port               int
-	SSL                string `toml:"ssl" deprecated:"1.7.0;use 'tls' instead"`
+	SSL                string `toml:"ssl" deprecated:"1.7.0;1.35.0;use 'tls' instead"`
 	TLS                string `toml:"tls"`
 	InsecureSkipVerify bool
-	SSLCA              string `toml:"ssl_ca" deprecated:"1.7.0;use 'tls_ca' instead"`
+	SSLCA              string `toml:"ssl_ca" deprecated:"1.7.0;1.35.0;use 'tls_ca' instead"`
 	TLSCA              string `toml:"tls_ca"`
 	BindDn             string
 	BindPassword       string
@@ -91,13 +91,13 @@ func (o *Openldap) Gather(acc telegraf.Accumulator) error {
 
 		switch o.TLS {
 		case "ldaps":
-			l, err = ldap.DialTLS("tcp", fmt.Sprintf("%s:%d", o.Host, o.Port), tlsConfig)
+			l, err = ldap.DialURL(fmt.Sprintf("ldaps://%s:%d", o.Host, o.Port), ldap.DialWithTLSConfig(tlsConfig))
 			if err != nil {
 				acc.AddError(err)
 				return nil
 			}
 		case "starttls":
-			l, err = ldap.Dial("tcp", fmt.Sprintf("%s:%d", o.Host, o.Port))
+			l, err = ldap.DialURL(fmt.Sprintf("ldap://%s:%d", o.Host, o.Port))
 			if err != nil {
 				acc.AddError(err)
 				return nil
@@ -112,7 +112,7 @@ func (o *Openldap) Gather(acc telegraf.Accumulator) error {
 			return nil
 		}
 	} else {
-		l, err = ldap.Dial("tcp", fmt.Sprintf("%s:%d", o.Host, o.Port))
+		l, err = ldap.DialURL(fmt.Sprintf("ldap://%s:%d", o.Host, o.Port))
 	}
 
 	if err != nil {
@@ -154,7 +154,7 @@ func (o *Openldap) Gather(acc telegraf.Accumulator) error {
 }
 
 func gatherSearchResult(sr *ldap.SearchResult, o *Openldap, acc telegraf.Accumulator) {
-	fields := map[string]interface{}{}
+	fields := make(map[string]interface{})
 	tags := map[string]string{
 		"server": o.Host,
 		"port":   strconv.Itoa(o.Port),

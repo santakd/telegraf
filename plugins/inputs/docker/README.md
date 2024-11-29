@@ -1,14 +1,17 @@
 # Docker Input Plugin
 
-The docker plugin uses the Docker Engine API to gather metrics on running
+This plugin uses the [Docker Engine API][api] to gather metrics on running
 docker containers.
 
-The docker plugin uses the [Official Docker Client][1] to gather stats from the
-[Engine API][2].
+> [!NOTE]
+> Please make sure Telegraf has sufficient permissions to access the configured
+> endpoint!
 
-[1]: https://github.com/moby/moby/tree/master/client
+⭐ Telegraf v0.1.9
+🏷️ containers
+💻 all
 
-[2]: https://docs.docker.com/engine/api/v1.24/
+[api]: https://docs.docker.com/engine/api
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -53,26 +56,18 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   # container_state_include = []
   # container_state_exclude = []
 
+  ## Objects to include for disk usage query
+  ## Allowed values are "container", "image", "volume" 
+  ## When empty disk usage is excluded
+  storage_objects = []
+
   ## Timeout for docker list, info, and stats commands
   timeout = "5s"
-
-  ## Whether to report for each container per-device blkio (8:0, 8:1...),
-  ## network (eth0, eth1, ...) and cpu (cpu0, cpu1, ...) stats or not.
-  ## Usage of this setting is discouraged since it will be deprecated in favor of 'perdevice_include'.
-  ## Default value is 'true' for backwards compatibility, please set it to 'false' so that 'perdevice_include' setting
-  ## is honored.
-  perdevice = true
 
   ## Specifies for which classes a per-device metric should be issued
   ## Possible values are 'cpu' (cpu0, cpu1, ...), 'blkio' (8:0, 8:1, ...) and 'network' (eth0, eth1, ...)
   ## Please note that this setting has no effect if 'perdevice' is set to 'true'
   # perdevice_include = ["cpu"]
-
-  ## Whether to report for each container total blkio and network stats or not.
-  ## Usage of this setting is discouraged since it will be deprecated in favor of 'total_include'.
-  ## Default value is 'false' for backwards compatibility, please set it to 'true' so that 'total_include' setting
-  ## is honored.
-  total = false
 
   ## Specifies for which classes a total metric should be issued. Total is an aggregated of the 'perdevice' values.
   ## Possible values are 'cpu', 'blkio' and 'network'
@@ -125,9 +120,12 @@ sudo usermod -aG docker telegraf
 If telegraf is run within a container, the unix socket will need to be exposed
 within the telegraf container. This can be done in the docker CLI by add the
 option `-v /var/run/docker.sock:/var/run/docker.sock` or adding the following
-lines to the telegraf container definition in a docker compose file:
+lines to the telegraf container definition in a docker compose file.
+Additionally docker `telegraf` user must be assigned to `docker` group id
+from host:
 
 ```yaml
+user: telegraf:<host_docker_gid>
 volumes:
   - /var/run/docker.sock:/var/run/docker.sock
 ```
@@ -379,6 +377,23 @@ status if configured.
     - tasks_desired
     - tasks_running
 
+- docker_disk_usage
+  - tags:
+    - engine_host
+    - server_version
+    - container_name
+    - container_image
+    - container_version
+    - image_id
+    - image_name
+    - image_version
+    - volume_name
+  - fields:
+    - size_rw
+    - size_root_fs
+    - size
+    - shared_size
+
 ## Example Output
 
 ```text
@@ -392,4 +407,8 @@ docker_container_net,container_image=telegraf,container_name=zen_ritchie,contain
 docker_container_blkio,container_image=telegraf,container_name=zen_ritchie,container_status=running,container_version=unknown,device=254:0,engine_host=debian-stretch-docker,server_version=17.09.0-ce container_id="adc4ba9593871bf2ab95f3ffde70d1b638b897bb225d21c2c9c84226a10a8cf4",io_service_bytes_recursive_async=27398144i,io_service_bytes_recursive_read=27398144i,io_service_bytes_recursive_sync=0i,io_service_bytes_recursive_total=27398144i,io_service_bytes_recursive_write=0i,io_serviced_recursive_async=529i,io_serviced_recursive_read=529i,io_serviced_recursive_sync=0i,io_serviced_recursive_total=529i,io_serviced_recursive_write=0i 1524002042000000000
 docker_container_health,container_image=telegraf,container_name=zen_ritchie,container_status=running,container_version=unknown,engine_host=debian-stretch-docker,server_version=17.09.0-ce failing_streak=0i,health_status="healthy" 1524007529000000000
 docker_swarm,service_id=xaup2o9krw36j2dy1mjx1arjw,service_mode=replicated,service_name=test tasks_desired=3,tasks_running=3 1508968160000000000
+docker_disk_usage,engine_host=docker-desktop,server_version=24.0.5 layers_size=17654519107i 1695742041000000000
+docker_disk_usage,container_image=influxdb,container_name=frosty_wright,container_version=1.8,engine_host=docker-desktop,server_version=24.0.5 size_root_fs=286593526i,size_rw=538i 1695742041000000000
+docker_disk_usage,engine_host=docker-desktop,image_id=7f4a1cc74046,image_name=telegraf,image_version=latest,server_version=24.0.5 shared_size=0i,size=425484494i 1695742041000000000
+docker_disk_usage,engine_host=docker-desktop,server_version=24.0.5,volume_name=docker_influxdb-data size=91989940i 1695742041000000000
 ```

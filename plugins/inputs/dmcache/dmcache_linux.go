@@ -3,11 +3,10 @@
 package dmcache
 
 import (
+	"errors"
 	"os/exec"
 	"strconv"
 	"strings"
-
-	"errors"
 
 	"github.com/influxdata/telegraf"
 )
@@ -180,7 +179,7 @@ func dmSetupStatus() ([]string, error) {
 		return nil, err
 	}
 	if string(out) == "No devices found\n" {
-		return []string{}, nil
+		return nil, nil
 	}
 
 	outString := strings.TrimRight(string(out), "\n")

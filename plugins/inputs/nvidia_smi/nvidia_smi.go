@@ -31,19 +31,19 @@ type NvidiaSMI struct {
 	Timeout config.Duration `toml:"timeout"`
 	Log     telegraf.Logger `toml:"-"`
 
-	once sync.Once
+	ignorePlugin bool
+	once         sync.Once
 }
 
 func (*NvidiaSMI) SampleConfig() string {
 	return sampleConfig
 }
 
-func (smi *NvidiaSMI) Init() error {
+func (smi *NvidiaSMI) Start(telegraf.Accumulator) error {
 	if _, err := os.Stat(smi.BinPath); os.IsNotExist(err) {
 		binPath, err := exec.LookPath("nvidia-smi")
-		// fail-fast
 		if err != nil {
-			return fmt.Errorf("nvidia-smi not found in %q and not in PATH; please make sure nvidia-smi is installed and/or is in PATH", smi.BinPath)
+			return &internal.StartupError{Err: err}
 		}
 		smi.BinPath = binPath
 	}
@@ -51,8 +51,14 @@ func (smi *NvidiaSMI) Init() error {
 	return nil
 }
 
+func (smi *NvidiaSMI) Stop() {}
+
 // Gather implements the telegraf interface
 func (smi *NvidiaSMI) Gather(acc telegraf.Accumulator) error {
+	if smi.ignorePlugin {
+		return nil
+	}
+
 	// Construct and execute metrics query
 	data, err := internal.CombinedOutputTimeout(exec.Command(smi.BinPath, "-q", "-x"), time.Duration(smi.Timeout))
 	if err != nil {

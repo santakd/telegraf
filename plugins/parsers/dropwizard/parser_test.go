@@ -1,16 +1,14 @@
 package dropwizard
 
 import (
-	"fmt"
 	"testing"
 	"time"
-
-	"github.com/influxdata/telegraf/testutil"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/testutil"
 )
 
 // validEmptyJSON is a valid dropwizard json document, but without any metrics
@@ -32,7 +30,7 @@ func TestParseValidEmptyJSON(t *testing.T) {
 	// Most basic vanilla test
 	metrics, err := parser.Parse([]byte(validEmptyJSON))
 	require.NoError(t, err)
-	require.Len(t, metrics, 0)
+	require.Empty(t, metrics)
 }
 
 // validCounterJSON is a valid dropwizard json document containing one counter
@@ -90,7 +88,8 @@ const validEmbeddedCounterJSON = `
 
 func TestParseValidEmbeddedCounterJSON(t *testing.T) {
 	timeFormat := "2006-01-02T15:04:05Z07:00"
-	metricTime, _ := time.Parse(timeFormat, "2017-02-22T15:33:03.662+03:00")
+	metricTime, err := time.Parse(timeFormat, "2017-02-22T15:33:03.662+03:00")
+	require.NoError(t, err)
 	parser := &Parser{
 		MetricRegistryPath: "metrics",
 		TagsPath:           "tags",
@@ -111,7 +110,7 @@ func TestParseValidEmbeddedCounterJSON(t *testing.T) {
 		"tag2":                    "yellow",
 		"tag3 space,comma=equals": "red ,=",
 	}, metrics[0].Tags())
-	require.True(t, metricTime.Equal(metrics[0].Time()), fmt.Sprintf("%s should be equal to %s", metrics[0].Time(), metricTime))
+	require.Truef(t, metricTime.Equal(metrics[0].Time()), "%s should be equal to %s", metrics[0].Time(), metricTime)
 
 	// now test json tags through TagPathsMap
 	parser2 := &Parser{
@@ -505,7 +504,7 @@ func search(metrics []telegraf.Metric, name string, tags map[string]string, fiel
 	return nil
 }
 
-func containsAll(t1 map[string]string, t2 map[string]string) bool {
+func containsAll(t1, t2 map[string]string) bool {
 	for k, v := range t2 {
 		if foundValue, ok := t1[k]; !ok || v != foundValue {
 			return false
@@ -588,5 +587,66 @@ func TestDropWizard(t *testing.T) {
 			}
 			testutil.RequireMetricsEqual(t, tt.metrics, metrics, testutil.IgnoreTime())
 		})
+	}
+}
+
+const benchmarkData = `{
+    "version": "3.0.0",
+	"gauges" : {
+		"benchmark,tags_host=myhost,tags_sdkver=3.11.5,tags_platform=python": {
+			"value": 5.0
+		},
+		"benchmark,tags_host=myhost,tags_sdkver=3.11.4,tags_platform=python": {
+			"value": 4.0
+		}
+	}
+}
+`
+
+func TestBenchmarkData(t *testing.T) {
+	plugin := &Parser{}
+	require.NoError(t, plugin.Init())
+
+	expected := []telegraf.Metric{
+		metric.New(
+			"benchmark",
+			map[string]string{
+				"metric_type":   "gauge",
+				"tags_host":     "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.5",
+			},
+			map[string]interface{}{
+				"value": 5.0,
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"benchmark",
+			map[string]string{
+				"metric_type":   "gauge",
+				"tags_host":     "myhost",
+				"tags_platform": "python",
+				"tags_sdkver":   "3.11.4",
+			},
+			map[string]interface{}{
+				"value": 4.0,
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	actual, err := plugin.Parse([]byte(benchmarkData))
+	require.NoError(t, err)
+	testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime(), testutil.SortMetrics())
+}
+
+func BenchmarkParsing(b *testing.B) {
+	plugin := &Parser{}
+	require.NoError(b, plugin.Init())
+
+	for n := 0; n < b.N; n++ {
+		//nolint:errcheck // Benchmarking so skip the error check to avoid the unnecessary operations
+		plugin.Parse([]byte(benchmarkData))
 	}
 }

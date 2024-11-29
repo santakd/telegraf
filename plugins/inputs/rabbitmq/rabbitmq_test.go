@@ -1,18 +1,18 @@
 package rabbitmq
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"testing"
 	"time"
 
-	"testing"
+	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestRabbitMQGeneratesMetricsSet1(t *testing.T) {
@@ -33,15 +33,23 @@ func TestRabbitMQGeneratesMetricsSet1(t *testing.T) {
 		case "/api/nodes/rabbit@vagrant-ubuntu-trusty-64/memory":
 			jsonFilePath = "testdata/set1/memory.json"
 		default:
-			http.Error(w, fmt.Sprintf("unknown path %q", r.URL.Path), http.StatusNotFound)
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("unknown path %q", r.URL.Path)
 			return
 		}
 
 		data, err := os.ReadFile(jsonFilePath)
-		require.NoErrorf(t, err, "could not read from data file %s", jsonFilePath)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Could not read from data file %q: %v", jsonFilePath, err)
+			return
+		}
 
-		_, err = w.Write(data)
-		require.NoError(t, err)
+		if _, err = w.Write(data); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer ts.Close()
 
@@ -221,7 +229,7 @@ func TestRabbitMQGeneratesMetricsSet1(t *testing.T) {
 	require.NoError(t, plugin.Gather(acc))
 
 	acc.Wait(len(expected))
-	require.Len(t, acc.Errors, 0)
+	require.Empty(t, acc.Errors)
 
 	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime(), testutil.SortMetrics())
 }
@@ -244,15 +252,23 @@ func TestRabbitMQGeneratesMetricsSet2(t *testing.T) {
 		case "/api/nodes/rabbit@rmqserver/memory":
 			jsonFilePath = "testdata/set2/memory.json"
 		default:
-			http.Error(w, fmt.Sprintf("unknown path %q", r.URL.Path), http.StatusNotFound)
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("unknown path %q", r.URL.Path)
 			return
 		}
 
 		data, err := os.ReadFile(jsonFilePath)
-		require.NoErrorf(t, err, "could not read from data file %s", jsonFilePath)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Could not read from data file %q: %v", jsonFilePath, err)
+			return
+		}
 
-		_, err = w.Write(data)
-		require.NoError(t, err)
+		if _, err = w.Write(data); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer ts.Close()
 
@@ -599,7 +615,7 @@ func TestRabbitMQGeneratesMetricsSet2(t *testing.T) {
 		),
 	}
 	expectedErrors := []error{
-		fmt.Errorf("error response trying to get \"/api/federation-links\": \"Object Not Found\" (reason: \"Not Found\")"),
+		errors.New("error response trying to get \"/api/federation-links\": \"Object Not Found\" (reason: \"Not Found\")"),
 	}
 
 	// Run the test
@@ -626,11 +642,11 @@ func TestRabbitMQMetricFilerts(t *testing.T) {
 	defer ts.Close()
 
 	metricErrors := map[string]error{
-		"exchange":   fmt.Errorf("getting \"/api/exchanges\" failed: 404 Not Found"),
-		"federation": fmt.Errorf("getting \"/api/federation-links\" failed: 404 Not Found"),
-		"node":       fmt.Errorf("getting \"/api/nodes\" failed: 404 Not Found"),
-		"overview":   fmt.Errorf("getting \"/api/overview\" failed: 404 Not Found"),
-		"queue":      fmt.Errorf("getting \"/api/queues\" failed: 404 Not Found"),
+		"exchange":   errors.New("getting \"/api/exchanges\" failed: 404 Not Found"),
+		"federation": errors.New("getting \"/api/federation-links\" failed: 404 Not Found"),
+		"node":       errors.New("getting \"/api/nodes\" failed: 404 Not Found"),
+		"overview":   errors.New("getting \"/api/overview\" failed: 404 Not Found"),
+		"queue":      errors.New("getting \"/api/queues\" failed: 404 Not Found"),
 	}
 
 	// Include test

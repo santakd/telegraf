@@ -75,7 +75,10 @@ type Statsd struct {
 	DeleteCounters  bool     `toml:"delete_counters"`
 	DeleteSets      bool     `toml:"delete_sets"`
 	DeleteTimings   bool     `toml:"delete_timings"`
-	ConvertNames    bool     `toml:"convert_names" deprecated:"0.12.0;1.30.0;use 'metric_separator' instead"`
+	ConvertNames    bool     `toml:"convert_names"`
+	FloatCounters   bool     `toml:"float_counters"`
+	FloatTimings    bool     `toml:"float_timings"`
+	FloatSets       bool     `toml:"float_sets"`
 
 	EnableAggregationTemporality bool `toml:"enable_aggregation_temporality"`
 
@@ -83,7 +86,7 @@ type Statsd struct {
 	MetricSeparator string `toml:"metric_separator"`
 	// This flag enables parsing of tags in the dogstatsd extension to the
 	// statsd protocol (http://docs.datadoghq.com/guides/dogstatsd/)
-	ParseDataDogTags bool `toml:"parse_data_dog_tags" deprecated:"1.10.0;use 'datadog_extensions' instead"`
+	ParseDataDogTags bool `toml:"parse_data_dog_tags" deprecated:"1.10.0;1.35.0;use 'datadog_extensions' instead"`
 
 	// Parses extensions to statsd in the datadog statsd format
 	// currently supports metrics and datadog tags.
@@ -95,11 +98,16 @@ type Statsd struct {
 	// https://docs.datadoghq.com/developers/metrics/types/?tab=distribution#definition
 	DataDogDistributions bool `toml:"datadog_distributions"`
 
+	// Either to keep or drop the container id as tag.
+	// Requires the DataDogExtension flag to be enabled.
+	// https://docs.datadoghq.com/developers/dogstatsd/datagram_shell/?tab=metrics#dogstatsd-protocol-v12
+	DataDogKeepContainerTag bool `toml:"datadog_keep_container_tag"`
+
 	// UDPPacketSize is deprecated, it's only here for legacy support
 	// we now always create 1 max size buffer and then copy only what we need
 	// into the in channel
 	// see https://github.com/influxdata/telegraf/pull/992
-	UDPPacketSize int `toml:"udp_packet_size" deprecated:"0.12.1;2.0.0;option is ignored"`
+	UDPPacketSize int `toml:"udp_packet_size" deprecated:"0.12.1;1.35.0;option is ignored"`
 
 	ReadBufferSize      int              `toml:"read_buffer_size"`
 	SanitizeNamesMethod string           `toml:"sanitize_name_method"`
@@ -158,6 +166,7 @@ type Statsd struct {
 	UDPBytesRecv       selfstat.Stat
 	ParseTimeNS        selfstat.Stat
 	PendingMessages    selfstat.Stat
+	MaxPendingMessages selfstat.Stat
 
 	lastGatherTime time.Time
 }
@@ -253,7 +262,11 @@ func (s *Statsd) Gather(acc telegraf.Accumulator) error {
 			fields[prefix+"sum"] = stats.Sum()
 			fields[prefix+"upper"] = stats.Upper()
 			fields[prefix+"lower"] = stats.Lower()
-			fields[prefix+"count"] = stats.Count()
+			if s.FloatTimings {
+				fields[prefix+"count"] = float64(stats.Count())
+			} else {
+				fields[prefix+"count"] = stats.Count()
+			}
 			for _, percentile := range s.Percentiles {
 				name := fmt.Sprintf("%s%v_percentile", prefix, percentile)
 				fields[name] = stats.Percentile(float64(percentile))
@@ -285,6 +298,11 @@ func (s *Statsd) Gather(acc telegraf.Accumulator) error {
 			m.fields["start_time"] = s.lastGatherTime.Format(time.RFC3339)
 		}
 
+		if s.FloatCounters {
+			for key := range m.fields {
+				m.fields[key] = float64(m.fields[key].(int64))
+			}
+		}
 		acc.AddCounter(m.name, m.fields, m.tags, now)
 	}
 	if s.DeleteCounters {
@@ -294,7 +312,11 @@ func (s *Statsd) Gather(acc telegraf.Accumulator) error {
 	for _, m := range s.sets {
 		fields := make(map[string]interface{})
 		for field, set := range m.fields {
-			fields[field] = int64(len(set))
+			if s.FloatSets {
+				fields[field] = float64(len(set))
+			} else {
+				fields[field] = int64(len(set))
+			}
 		}
 		if s.EnableAggregationTemporality {
 			fields["start_time"] = s.lastGatherTime.Format(time.RFC3339)
@@ -345,6 +367,8 @@ func (s *Statsd) Start(ac telegraf.Accumulator) error {
 	s.UDPBytesRecv = selfstat.Register("statsd", "udp_bytes_received", tags)
 	s.ParseTimeNS = selfstat.Register("statsd", "parse_time_ns", tags)
 	s.PendingMessages = selfstat.Register("statsd", "pending_messages", tags)
+	s.MaxPendingMessages = selfstat.Register("statsd", "max_pending_messages", tags)
+	s.MaxPendingMessages.Set(int64(s.AllowedPendingMessages))
 
 	s.in = make(chan input, s.AllowedPendingMessages)
 	s.done = make(chan struct{})
@@ -491,12 +515,10 @@ func (s *Statsd) udpListen(conn *net.UDPConn) error {
 			s.UDPBytesRecv.Incr(int64(n))
 			b, ok := s.bufPool.Get().(*bytes.Buffer)
 			if !ok {
-				return fmt.Errorf("bufPool is not a bytes buffer")
+				return errors.New("bufPool is not a bytes buffer")
 			}
 			b.Reset()
-			if _, err := b.Write(buf[:n]); err != nil {
-				return err
-			}
+			b.Write(buf[:n])
 			select {
 			case s.in <- input{
 				Buffer: b,
@@ -573,6 +595,11 @@ func (s *Statsd) parseStatsdLine(line string) error {
 			if len(segment) > 0 && segment[0] == '#' {
 				// we have ourselves a tag; they are comma separated
 				parseDataDogTags(lineTags, segment[1:])
+			} else if len(segment) > 0 && strings.HasPrefix(segment, "c:") {
+				// This is optional container ID field
+				if s.DataDogKeepContainerTag {
+					lineTags["container"] = segment[2:]
+				}
 			} else {
 				recombinedSegments = append(recombinedSegments, segment)
 			}
@@ -713,7 +740,7 @@ func (s *Statsd) parseStatsdLine(line string) error {
 // config file. If there is a match, it will parse the name of the metric and
 // map of tags.
 // Return values are (<name>, <field>, <tags>)
-func (s *Statsd) parseName(bucket string) (name string, field string, tags map[string]string) {
+func (s *Statsd) parseName(bucket string) (name, field string, tags map[string]string) {
 	s.Lock()
 	defer s.Unlock()
 	tags = make(map[string]string)
@@ -753,6 +780,7 @@ func (s *Statsd) parseName(bucket string) (name string, field string, tags map[s
 
 	if err == nil {
 		p.DefaultTags = tags
+		//nolint:errcheck // unable to propagate
 		name, tags, field, _ = p.ApplyTemplate(name)
 	}
 
@@ -768,7 +796,7 @@ func (s *Statsd) parseName(bucket string) (name string, field string, tags map[s
 }
 
 // Parse the key,value out of a string that looks like "key=value"
-func parseKeyValue(keyValue string) (key string, val string) {
+func parseKeyValue(keyValue string) (key, val string) {
 	split := strings.Split(keyValue, "=")
 	// Must be exactly 2 to get anything meaningful out of them
 	if len(split) == 2 {

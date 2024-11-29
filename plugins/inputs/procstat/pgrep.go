@@ -15,7 +15,7 @@ type Pgrep struct {
 	path string
 }
 
-func NewPgrep() (PIDFinder, error) {
+func newPgrepFinder() (PIDFinder, error) {
 	path, err := exec.LookPath("pgrep")
 	if err != nil {
 		return nil, fmt.Errorf("could not find pgrep binary: %w", err)
@@ -40,45 +40,40 @@ func (pg *Pgrep) PidFile(path string) ([]PID, error) {
 
 func (pg *Pgrep) Pattern(pattern string) ([]PID, error) {
 	args := []string{pattern}
-	return find(pg.path, args)
+	return pg.find(args)
 }
 
 func (pg *Pgrep) UID(user string) ([]PID, error) {
 	args := []string{"-u", user}
-	return find(pg.path, args)
+	return pg.find(args)
 }
 
 func (pg *Pgrep) FullPattern(pattern string) ([]PID, error) {
 	args := []string{"-f", pattern}
-	return find(pg.path, args)
+	return pg.find(args)
 }
 
-func find(path string, args []string) ([]PID, error) {
-	out, err := run(path, args)
+func (pg *Pgrep) Children(pid PID) ([]PID, error) {
+	args := []string{"-P", strconv.FormatInt(int64(pid), 10)}
+	return pg.find(args)
+}
+
+func (pg *Pgrep) find(args []string) ([]PID, error) {
+	// Execute pgrep with the given arguments
+	buf, err := exec.Command(pg.path, args...).Output()
 	if err != nil {
-		return nil, err
+		// Exit code 1 means "no processes found" so we should not return
+		// an error in this case.
+		if status, _ := internal.ExitStatus(err); status == 1 {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("error running %q: %w", pg.path, err)
 	}
+	out := string(buf)
 
-	return parseOutput(out)
-}
-
-func run(path string, args []string) (string, error) {
-	out, err := exec.Command(path, args...).Output()
-
-	//if exit code 1, ie no processes found, do not return error
-	if i, _ := internal.ExitStatus(err); i == 1 {
-		return "", nil
-	}
-
-	if err != nil {
-		return "", fmt.Errorf("error running %q: %w", path, err)
-	}
-	return string(out), err
-}
-
-func parseOutput(out string) ([]PID, error) {
-	pids := []PID{}
+	// Parse the command output to extract the PIDs
 	fields := strings.Fields(out)
+	pids := make([]PID, 0, len(fields))
 	for _, field := range fields {
 		pid, err := strconv.ParseInt(field, 10, 32)
 		if err != nil {

@@ -6,10 +6,13 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,18 +35,19 @@ const (
 )
 
 type Loki struct {
-	Domain          string            `toml:"domain"`
-	Endpoint        string            `toml:"endpoint"`
-	Timeout         config.Duration   `toml:"timeout"`
-	Username        config.Secret     `toml:"username"`
-	Password        config.Secret     `toml:"password"`
-	Headers         map[string]string `toml:"http_headers"`
-	ClientID        string            `toml:"client_id"`
-	ClientSecret    string            `toml:"client_secret"`
-	TokenURL        string            `toml:"token_url"`
-	Scopes          []string          `toml:"scopes"`
-	GZipRequest     bool              `toml:"gzip_request"`
-	MetricNameLabel string            `toml:"metric_name_label"`
+	Domain             string            `toml:"domain"`
+	Endpoint           string            `toml:"endpoint"`
+	Timeout            config.Duration   `toml:"timeout"`
+	Username           config.Secret     `toml:"username"`
+	Password           config.Secret     `toml:"password"`
+	Headers            map[string]string `toml:"http_headers"`
+	ClientID           string            `toml:"client_id"`
+	ClientSecret       string            `toml:"client_secret"`
+	TokenURL           string            `toml:"token_url"`
+	Scopes             []string          `toml:"scopes"`
+	GZipRequest        bool              `toml:"gzip_request"`
+	MetricNameLabel    string            `toml:"metric_name_label"`
+	SanitizeLabelNames bool              `toml:"sanitize_label_names"`
 
 	url    string
 	client *http.Client
@@ -84,7 +88,7 @@ func (*Loki) SampleConfig() string {
 
 func (l *Loki) Connect() (err error) {
 	if l.Domain == "" {
-		return fmt.Errorf("domain is required")
+		return errors.New("domain is required")
 	}
 
 	if l.Endpoint == "" {
@@ -125,13 +129,18 @@ func (l *Loki) Write(metrics []telegraf.Metric) error {
 		}
 
 		tags := m.TagList()
-		var line string
+		if l.SanitizeLabelNames {
+			for _, t := range tags {
+				t.Key = sanitizeLabelName(t.Key)
+			}
+		}
 
+		var line string
 		for _, f := range m.FieldList() {
 			line += fmt.Sprintf("%s=\"%v\" ", f.Key, f.Value)
 		}
 
-		s.insertLog(tags, Log{fmt.Sprintf("%d", m.Time().UnixNano()), line})
+		s.insertLog(tags, Log{strconv.FormatInt(m.Time().UnixNano(), 10), line})
 	}
 
 	return l.writeMetrics(s)
@@ -163,16 +172,16 @@ func (l *Loki) writeMetrics(s Streams) error {
 		}
 		password, err := l.Password.Get()
 		if err != nil {
-			config.ReleaseSecret(username)
+			username.Destroy()
 			return fmt.Errorf("getting password failed: %w", err)
 		}
-		req.SetBasicAuth(string(username), string(password))
-		config.ReleaseSecret(password)
-		config.ReleaseSecret(username)
+		req.SetBasicAuth(username.String(), password.String())
+		username.Destroy()
+		password.Destroy()
 	}
 
 	for k, v := range l.Headers {
-		if strings.ToLower(k) == "host" {
+		if strings.EqualFold(k, "host") {
 			req.Host = v
 		}
 		req.Header.Set(k, v)
@@ -188,14 +197,24 @@ func (l *Loki) writeMetrics(s Streams) error {
 	if err != nil {
 		return err
 	}
-	_ = resp.Body.Close()
+	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		//nolint:errcheck // err can be ignored since it is just for logging
 		body, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("when writing to [%s] received status code, %d: %s", l.url, resp.StatusCode, body)
 	}
 
 	return nil
+}
+
+// Verify the label name matches the regex [a-zA-Z_:][a-zA-Z0-9_:]*
+func sanitizeLabelName(name string) string {
+	re := regexp.MustCompile(`^[^a-zA-Z_:]`)
+	result := re.ReplaceAllString(name, "_")
+
+	re = regexp.MustCompile(`[^a-zA-Z0-9_:]`)
+	return re.ReplaceAllString(result, "_")
 }
 
 func init() {

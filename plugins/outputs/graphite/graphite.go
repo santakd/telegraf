@@ -9,12 +9,13 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers/graphite"
 )
@@ -37,12 +38,13 @@ type Graphite struct {
 	GraphiteStrictRegex     string `toml:"graphite_strict_sanitize_regex"`
 	// URL is only for backwards compatibility
 	Servers   []string        `toml:"servers"`
+	LocalAddr string          `toml:"local_address"`
 	Prefix    string          `toml:"prefix"`
 	Template  string          `toml:"template"`
 	Templates []string        `toml:"templates"`
 	Timeout   config.Duration `toml:"timeout"`
 	Log       telegraf.Logger `toml:"-"`
-	tlsint.ClientConfig
+	common_tls.ClientConfig
 
 	connections []connection
 	serializer  *graphite.GraphiteSerializer
@@ -104,6 +106,31 @@ func (g *Graphite) Connect() error {
 
 		// Dialer with timeout
 		d := net.Dialer{Timeout: time.Duration(g.Timeout)}
+		if g.LocalAddr != "" {
+			// Resolve the local address into IP address and the given port if any
+			addr, sPort, err := net.SplitHostPort(g.LocalAddr)
+			if err != nil {
+				if !strings.Contains(err.Error(), "missing port") {
+					return fmt.Errorf("invalid local address: %w", err)
+				}
+				addr = g.LocalAddr
+			}
+			local, err := net.ResolveIPAddr("ip", addr)
+			if err != nil {
+				return fmt.Errorf("cannot resolve local address: %w", err)
+			}
+
+			var port int
+			if sPort != "" {
+				p, err := strconv.ParseUint(sPort, 10, 16)
+				if err != nil {
+					return fmt.Errorf("invalid port: %w", err)
+				}
+				port = int(p)
+			}
+
+			d.LocalAddr = &net.TCPAddr{IP: local.IP, Port: port, Zone: local.Zone}
+		}
 
 		// Get secure connection if tls config is set
 		var conn net.Conn

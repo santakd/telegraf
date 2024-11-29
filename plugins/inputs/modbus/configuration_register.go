@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/influxdata/telegraf"
-	"github.com/influxdata/telegraf/models"
+	"github.com/influxdata/telegraf/config"
 )
 
 //go:embed sample_register.conf
@@ -18,23 +18,31 @@ type fieldDefinition struct {
 	DataType    string   `toml:"data_type"`
 	Scale       float64  `toml:"scale"`
 	Address     []uint16 `toml:"address"`
+	Bit         uint8    `toml:"bit"`
 }
 
-type ConfigurationOriginal struct {
+type configurationOriginal struct {
 	SlaveID          byte              `toml:"slave_id"`
 	DiscreteInputs   []fieldDefinition `toml:"discrete_inputs"`
 	Coils            []fieldDefinition `toml:"coils"`
 	HoldingRegisters []fieldDefinition `toml:"holding_registers"`
 	InputRegisters   []fieldDefinition `toml:"input_registers"`
-	workarounds      ModbusWorkarounds
+	workarounds      workarounds
 	logger           telegraf.Logger
 }
 
-func (c *ConfigurationOriginal) SampleConfigPart() string {
+func (c *configurationOriginal) sampleConfigPart() string {
 	return sampleConfigPartPerRegister
 }
 
-func (c *ConfigurationOriginal) Check() error {
+func (c *configurationOriginal) check() error {
+	switch c.workarounds.StringRegisterLocation {
+	case "", "both", "lower", "upper":
+		// Do nothing as those are valid
+	default:
+		return fmt.Errorf("invalid 'string_register_location' %q", c.workarounds.StringRegisterLocation)
+	}
+
 	if err := c.validateFieldDefinitions(c.DiscreteInputs, cDiscreteInputs); err != nil {
 		return err
 	}
@@ -50,7 +58,7 @@ func (c *ConfigurationOriginal) Check() error {
 	return c.validateFieldDefinitions(c.InputRegisters, cInputRegisters)
 }
 
-func (c *ConfigurationOriginal) Process() (map[byte]requestSet, error) {
+func (c *configurationOriginal) process() (map[byte]requestSet, error) {
 	maxQuantity := uint16(1)
 	if !c.workarounds.OnRequestPerField {
 		maxQuantity = maxQuantityCoils
@@ -94,22 +102,22 @@ func (c *ConfigurationOriginal) Process() (map[byte]requestSet, error) {
 	}, nil
 }
 
-func (c *ConfigurationOriginal) initRequests(fieldDefs []fieldDefinition, maxQuantity uint16, typed bool) ([]request, error) {
+func (c *configurationOriginal) initRequests(fieldDefs []fieldDefinition, maxQuantity uint16, typed bool) ([]request, error) {
 	fields, err := c.initFields(fieldDefs, typed)
 	if err != nil {
 		return nil, err
 	}
 	params := groupingParams{
-		MaxBatchSize:    maxQuantity,
-		Optimization:    "none",
-		EnforceFromZero: c.workarounds.ReadCoilsStartingAtZero,
-		Log:             c.logger,
+		maxBatchSize:    maxQuantity,
+		optimization:    "none",
+		enforceFromZero: c.workarounds.ReadCoilsStartingAtZero,
+		log:             c.logger,
 	}
 
 	return groupFieldsToRequests(fields, params), nil
 }
 
-func (c *ConfigurationOriginal) initFields(fieldDefs []fieldDefinition, typed bool) ([]field, error) {
+func (c *configurationOriginal) initFields(fieldDefs []fieldDefinition, typed bool) ([]field, error) {
 	// Construct the fields from the field definitions
 	fields := make([]field, 0, len(fieldDefs))
 	for _, def := range fieldDefs {
@@ -123,7 +131,7 @@ func (c *ConfigurationOriginal) initFields(fieldDefs []fieldDefinition, typed bo
 	return fields, nil
 }
 
-func (c *ConfigurationOriginal) newFieldFromDefinition(def fieldDefinition, typed bool) (field, error) {
+func (c *configurationOriginal) newFieldFromDefinition(def fieldDefinition, typed bool) (field, error) {
 	// Check if the addresses are consecutive
 	expected := def.Address[0]
 	for _, current := range def.Address[1:] {
@@ -165,7 +173,7 @@ func (c *ConfigurationOriginal) newFieldFromDefinition(def fieldDefinition, type
 			return f, err
 		}
 
-		f.converter, err = determineConverter(inType, byteOrder, outType, def.Scale)
+		f.converter, err = determineConverter(inType, byteOrder, outType, def.Scale, def.Bit, c.workarounds.StringRegisterLocation)
 		if err != nil {
 			return f, err
 		}
@@ -174,8 +182,8 @@ func (c *ConfigurationOriginal) newFieldFromDefinition(def fieldDefinition, type
 	return f, nil
 }
 
-func (c *ConfigurationOriginal) validateFieldDefinitions(fieldDefs []fieldDefinition, registerType string) error {
-	nameEncountered := map[string]bool{}
+func (c *configurationOriginal) validateFieldDefinitions(fieldDefs []fieldDefinition, registerType string) error {
+	nameEncountered := make(map[string]bool, len(fieldDefs))
 	for _, item := range fieldDefs {
 		// check empty name
 		if item.Name == "" {
@@ -202,13 +210,13 @@ func (c *ConfigurationOriginal) validateFieldDefinitions(fieldDefs []fieldDefini
 			case "INT8L", "INT8H", "UINT8L", "UINT8H",
 				"UINT16", "INT16", "UINT32", "INT32", "UINT64", "INT64",
 				"FLOAT16-IEEE", "FLOAT32-IEEE", "FLOAT64-IEEE", "FLOAT32", "FIXED", "UFIXED":
+				// Check scale
+				if item.Scale == 0.0 {
+					return fmt.Errorf("invalid scale '%f' in %q - %q", item.Scale, registerType, item.Name)
+				}
+			case "BIT", "STRING":
 			default:
 				return fmt.Errorf("invalid data type %q in %q - %q", item.DataType, registerType, item.Name)
-			}
-
-			// check scale
-			if item.Scale == 0.0 {
-				return fmt.Errorf("invalid scale '%f' in %q - %q", item.Scale, registerType, item.Name)
 			}
 		} else {
 			// Bit-registers do have less data types
@@ -219,7 +227,18 @@ func (c *ConfigurationOriginal) validateFieldDefinitions(fieldDefs []fieldDefini
 			}
 		}
 
-		// check address
+		// Special address checking for special types
+		switch item.DataType {
+		case "STRING":
+			continue
+		case "BIT":
+			if len(item.Address) != 1 {
+				return fmt.Errorf("address '%v' has length '%v' bit should be one in %q - %q", item.Address, len(item.Address), registerType, item.Name)
+			}
+			continue
+		}
+
+		// Check address
 		if len(item.Address) != 1 && len(item.Address) != 2 && len(item.Address) != 4 {
 			return fmt.Errorf("invalid address '%v' length '%v' in %q - %q", item.Address, len(item.Address), registerType, item.Name)
 		}
@@ -236,7 +255,6 @@ func (c *ConfigurationOriginal) validateFieldDefinitions(fieldDefs []fieldDefini
 				requiredAddresses = 1
 			case "UINT32", "INT32", "FLOAT32-IEEE":
 				requiredAddresses = 2
-
 			case "UINT64", "INT64", "FLOAT64-IEEE":
 				requiredAddresses = 4
 			}
@@ -258,11 +276,11 @@ func (c *ConfigurationOriginal) validateFieldDefinitions(fieldDefs []fieldDefini
 	return nil
 }
 
-func (c *ConfigurationOriginal) normalizeInputDatatype(dataType string, words int) (string, error) {
+func (c *configurationOriginal) normalizeInputDatatype(dataType string, words int) (string, error) {
 	if dataType == "FLOAT32" {
-		models.PrintOptionValueDeprecationNotice(telegraf.Warn, "input.modbus", "data_type", "FLOAT32", telegraf.DeprecationInfo{
-			Since:     "v1.16.0",
-			RemovalIn: "v2.0.0",
+		config.PrintOptionValueDeprecationNotice("input.modbus", "data_type", "FLOAT32", telegraf.DeprecationInfo{
+			Since:     "1.16.0",
+			RemovalIn: "1.35.0",
 			Notice:    "Use 'UFIXED' instead",
 		})
 	}
@@ -297,11 +315,15 @@ func (c *ConfigurationOriginal) normalizeInputDatatype(dataType string, words in
 		return "FLOAT32", nil
 	case "FLOAT64-IEEE":
 		return "FLOAT64", nil
+	case "STRING":
+		return "STRING", nil
+	case "BIT":
+		return "BIT", nil
 	}
 	return normalizeInputDatatype(dataType)
 }
 
-func (c *ConfigurationOriginal) normalizeOutputDatatype(dataType string) (string, error) {
+func (c *configurationOriginal) normalizeOutputDatatype(dataType string) (string, error) {
 	// Handle our special types
 	switch dataType {
 	case "FIXED", "FLOAT32", "UFIXED":
@@ -310,7 +332,7 @@ func (c *ConfigurationOriginal) normalizeOutputDatatype(dataType string) (string
 	return normalizeOutputDatatype("native")
 }
 
-func (c *ConfigurationOriginal) normalizeByteOrder(byteOrder string) (string, error) {
+func (c *configurationOriginal) normalizeByteOrder(byteOrder string) (string, error) {
 	// Handle our special types
 	switch byteOrder {
 	case "AB", "ABCDEFGH":

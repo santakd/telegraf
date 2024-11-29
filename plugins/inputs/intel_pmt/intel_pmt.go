@@ -33,13 +33,6 @@ const (
 	pluginName         = "intel_pmt"
 )
 
-type pmtFileInfo []fileInfo
-
-type fileInfo struct {
-	path     string
-	numaNode string
-}
-
 type IntelPMT struct {
 	PmtSpec        string          `toml:"spec"`
 	DatatypeFilter []string        `toml:"datatypes_enabled"`
@@ -55,12 +48,18 @@ type IntelPMT struct {
 	pmtTransformations     map[string]map[string]transformation
 }
 
-// SampleConfig returns a sample configuration (See sample.conf).
+type pmtFileInfo []fileInfo
+
+type fileInfo struct {
+	path     string
+	numaNode string
+	pciBdf   string // PCI Bus:Device.Function (BDF)
+}
+
 func (p *IntelPMT) SampleConfig() string {
 	return sampleConfig
 }
 
-// Init performs one time setup of the plugin
 func (p *IntelPMT) Init() error {
 	err := p.checkPmtSpec()
 	if err != nil {
@@ -75,7 +74,6 @@ func (p *IntelPMT) Init() error {
 	return p.parseXMLs()
 }
 
-// Gather collects the plugin's metrics.
 func (p *IntelPMT) Gather(acc telegraf.Accumulator) error {
 	var wg sync.WaitGroup
 	var hasError atomic.Bool
@@ -91,7 +89,7 @@ func (p *IntelPMT) Gather(acc telegraf.Accumulator) error {
 					return
 				}
 
-				err = p.aggregateSamples(acc, guid, data, info.numaNode)
+				err = p.aggregateSamples(acc, guid, data, info.numaNode, info.pciBdf)
 				if err != nil {
 					hasError.Store(true)
 					acc.AddError(fmt.Errorf("gathering metrics failed: %w", err))
@@ -139,7 +137,7 @@ func (p *IntelPMT) checkPmtSpec() error {
 //
 // This method finds "telem" files, used to retrieve telemetry values
 // and saves them under their corresponding GUID.
-// It also finds which NUMA node the samples belong to.
+// It also finds which NUMA node and PCI BDF the samples belong to.
 //
 // Returns:
 //
@@ -177,24 +175,29 @@ func (p *IntelPMT) explorePmtInSysfs() error {
 			continue
 		}
 
-		numaNodePath := filepath.Join(telemDirPath, "device", "numa_node")
-		numaNodeSymlink, err := filepath.EvalSymlinks(numaNodePath)
+		telemDevicePath := filepath.Join(telemDirPath, "device")
+		telemDeviceSymlink, err := filepath.EvalSymlinks(telemDevicePath)
 		if err != nil {
-			return fmt.Errorf("error while evaluating symlink %q: %w", numaNodePath, err)
+			return fmt.Errorf("error while evaluating symlink %q: %w", telemDeviceSymlink, err)
 		}
 
-		numaNode, err := os.ReadFile(numaNodeSymlink)
+		telemDevicePciBdf := filepath.Base(filepath.Join(telemDeviceSymlink, ".."))
+
+		numaNodePath := filepath.Join(telemDeviceSymlink, "..", "numa_node")
+
+		numaNode, err := os.ReadFile(numaNodePath)
 		if err != nil {
-			return fmt.Errorf("error while reading symlink %q: %w", numaNodeSymlink, err)
+			return fmt.Errorf("error while reading numa_node file %q: %w", numaNodePath, err)
 		}
 		numaNodeString := strings.TrimSpace(string(numaNode))
 		if numaNodeString == "" {
-			return fmt.Errorf("numa_node file %q is empty", numaNodeSymlink)
+			return fmt.Errorf("numa_node file %q is empty", numaNodePath)
 		}
 
 		fi := fileInfo{
 			path:     telemPath,
 			numaNode: numaNodeString,
+			pciBdf:   telemDevicePciBdf,
 		}
 		p.pmtTelemetryFiles[tID] = append(p.pmtTelemetryFiles[tID], fi)
 	}
@@ -284,15 +287,16 @@ func getTelemSample(s sample, buf []byte, offset uint64) (uint64, error) {
 //
 // Parameters:
 //
-//	guid - GUID saying which Aggregator Interface will be read.
-//	data - contents of the "telem" file.
-//	numaNode - which NUMA node this sample belongs to.
-//	acc - Telegraf Accumulator.
+// guid - GUID saying which Aggregator Interface will be read.
+// data - contents of the "telem" file.
+// numaNode - which NUMA node this sample belongs to.
+// pciBdf - PCI Bus:Device.Function (BDF) this sample belongs to.
+// acc - Telegraf Accumulator.
 //
 // Returns:
 //
 //	error - error if getting values has failed, if sample IDref is missing or if equation evaluation has failed.
-func (p *IntelPMT) aggregateSamples(acc telegraf.Accumulator, guid string, data []byte, numaNode string) error {
+func (p *IntelPMT) aggregateSamples(acc telegraf.Accumulator, guid string, data []byte, numaNode, pciBdf string) error {
 	results, err := p.getSampleValues(guid, data)
 	if err != nil {
 		return err
@@ -316,6 +320,7 @@ func (p *IntelPMT) aggregateSamples(acc telegraf.Accumulator, guid string, data 
 		tags := map[string]string{
 			"guid":           guid,
 			"numa_node":      numaNode,
+			"pci_bdf":        pciBdf,
 			"sample_name":    sample.SampleName,
 			"sample_group":   sample.SampleGroup,
 			"datatype_idref": sample.DatatypeIDRef,
@@ -376,7 +381,7 @@ func eval(eq string, params map[string]interface{}) (interface{}, error) {
 	// gval doesn't support hexadecimals
 	eq = hexToDecRegex.ReplaceAllStringFunc(eq, hexToDec)
 	if eq == "" {
-		return nil, fmt.Errorf("error during hex to decimal conversion")
+		return nil, errors.New("error during hex to decimal conversion")
 	}
 	result, err := gval.Evaluate(eq, params)
 	if err != nil {

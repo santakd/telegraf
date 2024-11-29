@@ -4,6 +4,7 @@ package elasticsearch_query
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -15,31 +16,29 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
-	"github.com/influxdata/telegraf/plugins/common/tls"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-// ElasticsearchQuery struct
 type ElasticsearchQuery struct {
 	URLs                []string        `toml:"urls"`
 	Username            string          `toml:"username"`
 	Password            string          `toml:"password"`
 	EnableSniffer       bool            `toml:"enable_sniffer"`
-	Timeout             config.Duration `toml:"timeout"`
 	HealthCheckInterval config.Duration `toml:"health_check_interval"`
 	Aggregations        []esAggregation `toml:"aggregation"`
 
 	Log telegraf.Logger `toml:"-"`
 
-	tls.ClientConfig
 	httpclient *http.Client
-	esClient   *elastic5.Client
+	common_http.HTTPClientConfig
+
+	esClient *elastic5.Client
 }
 
-// esAggregation struct
 type esAggregation struct {
 	Index                string          `toml:"index"`
 	MeasurementName      string          `toml:"measurement_name"`
@@ -60,15 +59,14 @@ func (*ElasticsearchQuery) SampleConfig() string {
 	return sampleConfig
 }
 
-// Init the plugin.
 func (e *ElasticsearchQuery) Init() error {
 	if e.URLs == nil {
-		return fmt.Errorf("elasticsearch urls is not defined")
+		return errors.New("elasticsearch urls is not defined")
 	}
 
 	err := e.connectToES()
 	if err != nil {
-		e.Log.Errorf("E! error connecting to elasticsearch: %s", err)
+		e.Log.Errorf("error connecting to elasticsearch: %s", err)
 		return nil
 	}
 
@@ -77,10 +75,10 @@ func (e *ElasticsearchQuery) Init() error {
 
 	for i, agg := range e.Aggregations {
 		if agg.MeasurementName == "" {
-			return fmt.Errorf("field 'measurement_name' is not set")
+			return errors.New("field 'measurement_name' is not set")
 		}
 		if agg.DateField == "" {
-			return fmt.Errorf("field 'date_field' is not set")
+			return errors.New("field 'date_field' is not set")
 		}
 		err = e.initAggregation(ctx, agg, i)
 		if err != nil {
@@ -89,6 +87,40 @@ func (e *ElasticsearchQuery) Init() error {
 		}
 	}
 	return nil
+}
+
+func (e *ElasticsearchQuery) Start(_ telegraf.Accumulator) error {
+	return nil
+}
+
+// Gather writes the results of the queries from Elasticsearch to the Accumulator.
+func (e *ElasticsearchQuery) Gather(acc telegraf.Accumulator) error {
+	var wg sync.WaitGroup
+
+	err := e.connectToES()
+	if err != nil {
+		return err
+	}
+
+	for i, agg := range e.Aggregations {
+		wg.Add(1)
+		go func(agg esAggregation, i int) {
+			defer wg.Done()
+			err := e.esAggregationQuery(acc, agg, i)
+			if err != nil {
+				acc.AddError(fmt.Errorf("elasticsearch query aggregation %s: %w", agg.MeasurementName, err))
+			}
+		}(agg, i)
+	}
+
+	wg.Wait()
+	return nil
+}
+
+func (e *ElasticsearchQuery) Stop() {
+	if e.httpclient != nil {
+		e.httpclient.CloseIdleConnections()
+	}
 }
 
 func (e *ElasticsearchQuery) initAggregation(ctx context.Context, agg esAggregation, i int) (err error) {
@@ -160,7 +192,7 @@ func (e *ElasticsearchQuery) connectToES() error {
 
 	// quit if ES version is not supported
 	if len(esVersionSplit) == 0 {
-		return fmt.Errorf("elasticsearch version check failed")
+		return errors.New("elasticsearch version check failed")
 	}
 
 	i, err := strconv.Atoi(esVersionSplit[0])
@@ -172,45 +204,9 @@ func (e *ElasticsearchQuery) connectToES() error {
 	return nil
 }
 
-// Gather writes the results of the queries from Elasticsearch to the Accumulator.
-func (e *ElasticsearchQuery) Gather(acc telegraf.Accumulator) error {
-	var wg sync.WaitGroup
-
-	err := e.connectToES()
-	if err != nil {
-		return err
-	}
-
-	for i, agg := range e.Aggregations {
-		wg.Add(1)
-		go func(agg esAggregation, i int) {
-			defer wg.Done()
-			err := e.esAggregationQuery(acc, agg, i)
-			if err != nil {
-				acc.AddError(fmt.Errorf("elasticsearch query aggregation %s: %w", agg.MeasurementName, err))
-			}
-		}(agg, i)
-	}
-
-	wg.Wait()
-	return nil
-}
-
 func (e *ElasticsearchQuery) createHTTPClient() (*http.Client, error) {
-	tlsCfg, err := e.ClientConfig.TLSConfig()
-	if err != nil {
-		return nil, err
-	}
-	tr := &http.Transport{
-		ResponseHeaderTimeout: time.Duration(e.Timeout),
-		TLSClientConfig:       tlsCfg,
-	}
-	httpclient := &http.Client{
-		Transport: tr,
-		Timeout:   time.Duration(e.Timeout),
-	}
-
-	return httpclient, nil
+	ctx := context.Background()
+	return e.HTTPClientConfig.CreateClient(ctx, e.Log)
 }
 
 func (e *ElasticsearchQuery) esAggregationQuery(acc telegraf.Accumulator, aggregation esAggregation, i int) error {
@@ -242,8 +238,11 @@ func (e *ElasticsearchQuery) esAggregationQuery(acc telegraf.Accumulator, aggreg
 func init() {
 	inputs.Add("elasticsearch_query", func() telegraf.Input {
 		return &ElasticsearchQuery{
-			Timeout:             config.Duration(time.Second * 5),
 			HealthCheckInterval: config.Duration(time.Second * 10),
+			HTTPClientConfig: common_http.HTTPClientConfig{
+				ResponseHeaderTimeout: config.Duration(5 * time.Second),
+				Timeout:               config.Duration(5 * time.Second),
+			},
 		}
 	})
 }

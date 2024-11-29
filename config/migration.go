@@ -92,8 +92,8 @@ func assignTextToSections(data []byte, sections []section) ([]section, error) {
 
 			line := strings.TrimSpace(scanner.Text())
 			if strings.HasPrefix(line, "#") {
-				_, _ = buf.Write(scanner.Bytes())
-				_, _ = buf.WriteString("\n")
+				buf.Write(scanner.Bytes())
+				buf.WriteString("\n")
 				continue
 			} else if buf.Len() > 0 {
 				if _, err := io.Copy(sections[idx].raw, &buf); err != nil {
@@ -102,8 +102,8 @@ func assignTextToSections(data []byte, sections []section) ([]section, error) {
 				buf.Reset()
 			}
 
-			_, _ = sections[idx].raw.Write(scanner.Bytes())
-			_, _ = sections[idx].raw.WriteString("\n")
+			sections[idx].raw.Write(scanner.Bytes())
+			sections[idx].raw.WriteString("\n")
 		}
 		if err := scanner.Err(); err != nil {
 			return nil, fmt.Errorf("splitting by line failed: %w", err)
@@ -120,8 +120,8 @@ func assignTextToSections(data []byte, sections []section) ([]section, error) {
 	}
 	// Write the remaining to the last section
 	for scanner.Scan() {
-		_, _ = sections[len(sections)-1].raw.Write(scanner.Bytes())
-		_, _ = sections[len(sections)-1].raw.WriteString("\n")
+		sections[len(sections)-1].raw.Write(scanner.Bytes())
+		sections[len(sections)-1].raw.WriteString("\n")
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("splitting by line failed: %w", err)
@@ -151,8 +151,31 @@ func ApplyMigrations(data []byte) ([]byte, uint64, error) {
 		return nil, 0, fmt.Errorf("assigning text failed: %w", err)
 	}
 
-	// Do the actual migration(s)
 	var applied uint64
+	// Do the actual global section migration(s)
+	for idx, s := range sections {
+		if strings.Contains(s.name, ".") {
+			continue
+		}
+		log.Printf("D!   applying global migrations to section %q in line %d...", s.name, s.begin)
+		for _, migrate := range migrations.GlobalMigrations {
+			result, msg, err := migrate(s.name, s.content)
+			if err != nil {
+				if errors.Is(err, migrations.ErrNotApplicable) {
+					continue
+				}
+				return nil, 0, fmt.Errorf("migrating options of %q (line %d) failed: %w", s.name, s.begin, err)
+			}
+			if msg != "" {
+				log.Printf("I! Global section %q in line %d: %s", s.name, s.begin, msg)
+			}
+			s.raw = bytes.NewBuffer(result)
+			applied++
+		}
+		sections[idx] = s
+	}
+
+	// Do the actual plugin migration(s)
 	for idx, s := range sections {
 		migrate, found := migrations.PluginMigrations[s.name]
 		if !found {
@@ -168,10 +191,64 @@ func ApplyMigrations(data []byte) ([]byte, uint64, error) {
 			log.Printf("I! Plugin %q in line %d: %s", s.name, s.begin, msg)
 		}
 		s.raw = bytes.NewBuffer(result)
+		tbl, err := toml.Parse(s.raw.Bytes())
+		if err != nil {
+			return nil, 0, fmt.Errorf("reparsing migrated %q (line %d) failed: %w", s.name, s.begin, err)
+		}
+		s.content = tbl
 		sections[idx] = s
 		applied++
 	}
 
+	// Do the actual plugin option migration(s)
+	for idx, s := range sections {
+		migrate, found := migrations.PluginOptionMigrations[s.name]
+		if !found {
+			continue
+		}
+
+		log.Printf("D!   migrating options of plugin %q in line %d...", s.name, s.begin)
+		result, msg, err := migrate(s.content)
+		if err != nil {
+			if errors.Is(err, migrations.ErrNotApplicable) {
+				continue
+			}
+			return nil, 0, fmt.Errorf("migrating options of %q (line %d) failed: %w", s.name, s.begin, err)
+		}
+		if msg != "" {
+			log.Printf("I! Plugin %q in line %d: %s", s.name, s.begin, msg)
+		}
+		s.raw = bytes.NewBuffer(result)
+		sections[idx] = s
+		applied++
+	}
+
+	// Do general migrations applying to all plugins
+	for idx, s := range sections {
+		parts := strings.Split(s.name, ".")
+		if len(parts) != 2 {
+			continue
+		}
+		log.Printf("D!   applying general migrations to plugin %q in line %d...", s.name, s.begin)
+		category, name := parts[0], parts[1]
+		for _, migrate := range migrations.GeneralMigrations {
+			result, msg, err := migrate(category, name, s.content)
+			if err != nil {
+				if errors.Is(err, migrations.ErrNotApplicable) {
+					continue
+				}
+				return nil, 0, fmt.Errorf("migrating options of %q (line %d) failed: %w", s.name, s.begin, err)
+			}
+			if msg != "" {
+				log.Printf("I! Plugin %q in line %d: %s", s.name, s.begin, msg)
+			}
+			s.raw = bytes.NewBuffer(result)
+			applied++
+		}
+		sections[idx] = s
+	}
+
+	// Reconstruct the config file from the sections
 	var buf bytes.Buffer
 	for _, s := range sections {
 		_, err = s.raw.WriteTo(&buf)

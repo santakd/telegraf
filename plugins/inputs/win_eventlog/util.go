@@ -8,6 +8,7 @@ package win_eventlog
 import (
 	"bytes"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode/utf16"
@@ -20,7 +21,7 @@ import (
 // DecodeUTF16 to UTF8 bytes
 func DecodeUTF16(b []byte) ([]byte, error) {
 	if len(b)%2 != 0 {
-		return nil, fmt.Errorf("must have even length byte slice")
+		return nil, errors.New("must have even length byte slice")
 	}
 
 	u16s := make([]uint16, 1)
@@ -49,7 +50,7 @@ func GetFromSnapProcess(pid uint32) (string, error) {
 	}
 	defer windows.CloseHandle(snap)
 	var pe32 windows.ProcessEntry32
-	pe32.Size = uint32(unsafe.Sizeof(pe32)) //nolint:gosec // G103: Valid use of unsafe call to determine the size of the struct
+	pe32.Size = uint32(unsafe.Sizeof(pe32))
 	if err := windows.Process32First(snap, &pe32); err != nil {
 		return "", err
 	}
@@ -134,7 +135,7 @@ func walkXML(nodes []xmlnode, parents []string, separator string, f func(xmlnode
 // UniqueFieldNames forms unique field names
 // by adding _<num> if there are several of them
 func UniqueFieldNames(fields []EventField, fieldsUsage map[string]int, separator string) []EventField {
-	var fieldsCounter = map[string]int{}
+	var fieldsCounter = make(map[string]int, len(fields))
 	fieldsUnique := make([]EventField, 0, len(fields))
 	for _, field := range fields {
 		fieldName := field.Name

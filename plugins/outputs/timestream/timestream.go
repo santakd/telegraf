@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"strconv"
 	"sync"
@@ -18,7 +19,7 @@ import (
 	"github.com/aws/smithy-go"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
+	common_aws "github.com/influxdata/telegraf/plugins/common/aws"
 	"github.com/influxdata/telegraf/plugins/outputs"
 )
 
@@ -46,7 +47,7 @@ type (
 		Log telegraf.Logger
 		svc WriteClient
 
-		internalaws.CredentialConfig
+		common_aws.CredentialConfig
 	}
 
 	WriteClient interface {
@@ -75,7 +76,7 @@ const MaxRecordsPerCall = 100
 const MaxWriteRoutinesDefault = 1
 
 // WriteFactory function provides a way to mock the client instantiation for testing purposes.
-var WriteFactory = func(credentialConfig *internalaws.CredentialConfig) (WriteClient, error) {
+var WriteFactory = func(credentialConfig *common_aws.CredentialConfig) (WriteClient, error) {
 	awsCreds, awsErr := credentialConfig.Credentials()
 	if awsErr != nil {
 		panic("Unable to load credentials config " + awsErr.Error())
@@ -87,23 +88,14 @@ var WriteFactory = func(credentialConfig *internalaws.CredentialConfig) (WriteCl
 	}
 
 	if credentialConfig.EndpointURL != "" && credentialConfig.Region != "" {
-		customResolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
-			return aws.Endpoint{
-				PartitionID:   "aws",
-				URL:           credentialConfig.EndpointURL,
-				SigningRegion: credentialConfig.Region,
-			}, nil
-		})
-
-		cfg, err := config.LoadDefaultConfig(context.TODO(), config.WithEndpointResolverWithOptions(customResolver))
-
+		cfg, err := config.LoadDefaultConfig(context.TODO())
 		if err != nil {
 			panic("unable to load SDK config for Timestream " + err.Error())
 		}
-
 		cfg.Credentials = awsCreds.Credentials
 
 		return timestreamwrite.NewFromConfig(cfg, func(o *timestreamwrite.Options) {
+			o.BaseEndpoint = &credentialConfig.EndpointURL
 			o.Region = credentialConfig.Region
 			o.EndpointDiscovery.EnableEndpointDiscovery = aws.EndpointDiscoveryDisabled
 		}), nil
@@ -122,11 +114,11 @@ func (*Timestream) SampleConfig() string {
 
 func (t *Timestream) Connect() error {
 	if t.DatabaseName == "" {
-		return fmt.Errorf("DatabaseName key is required")
+		return errors.New("'database_name' key is required")
 	}
 
 	if t.MappingMode == "" {
-		return fmt.Errorf("MappingMode key is required")
+		return errors.New("'mapping_mode' key is required")
 	}
 
 	if t.MappingMode != MappingModeSingleTable && t.MappingMode != MappingModeMultiTable {
@@ -170,11 +162,11 @@ func (t *Timestream) Connect() error {
 
 	if t.CreateTableIfNotExists {
 		if t.CreateTableMagneticStoreRetentionPeriodInDays < 1 {
-			return fmt.Errorf("if Telegraf should create tables, CreateTableMagneticStoreRetentionPeriodInDays key should have a value greater than 0")
+			return errors.New("if Telegraf should create tables, CreateTableMagneticStoreRetentionPeriodInDays key should have a value greater than 0")
 		}
 
 		if t.CreateTableMemoryStoreRetentionPeriodInHours < 1 {
-			return fmt.Errorf("if Telegraf should create tables, CreateTableMemoryStoreRetentionPeriodInHours key should have a value greater than 0")
+			return errors.New("if Telegraf should create tables, CreateTableMemoryStoreRetentionPeriodInHours key should have a value greater than 0")
 		}
 	}
 
@@ -352,8 +344,8 @@ func (t *Timestream) createTable(tableName *string) error {
 		DatabaseName: aws.String(t.DatabaseName),
 		TableName:    aws.String(*tableName),
 		RetentionProperties: &types.RetentionProperties{
-			MagneticStoreRetentionPeriodInDays: t.CreateTableMagneticStoreRetentionPeriodInDays,
-			MemoryStoreRetentionPeriodInHours:  t.CreateTableMemoryStoreRetentionPeriodInHours,
+			MagneticStoreRetentionPeriodInDays: &t.CreateTableMagneticStoreRetentionPeriodInDays,
+			MemoryStoreRetentionPeriodInHours:  &t.CreateTableMemoryStoreRetentionPeriodInHours,
 		},
 	}
 	tags := make([]types.Tag, 0, len(t.CreateTableTags))
@@ -609,7 +601,11 @@ func convertValue(v interface{}) (value string, valueType types.MeasureValueType
 		value = strconv.FormatUint(uint64(t), 10)
 	case uint64:
 		valueType = types.MeasureValueTypeBigint
-		value = strconv.FormatUint(t, 10)
+		if t <= uint64(math.MaxInt64) {
+			value = strconv.FormatUint(t, 10)
+		} else {
+			value = strconv.FormatUint(math.MaxInt64, 10)
+		}
 	case float32:
 		valueType = types.MeasureValueTypeDouble
 		value = strconv.FormatFloat(float64(t), 'f', -1, 32)

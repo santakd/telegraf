@@ -1,6 +1,12 @@
 # InfluxDB v2.x Output Plugin
 
-The InfluxDB output plugin writes metrics to the [InfluxDB v2.x] HTTP service.
+This plugin writes metrics to a [InfluxDB v2.x][influxdb_v2] instance via HTTP.
+
+⭐ Telegraf v1.8.0
+🏷️ datastore
+💻 all
+
+[influxdb_v2]: https://docs.influxdata.com/influxdb/v2
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -30,6 +36,10 @@ to use them.
   ## urls will be written to each interval.
   ##   ex: urls = ["https://us-west-2-1.aws.cloud2.influxdata.com"]
   urls = ["http://127.0.0.1:8086"]
+
+  ## Local address to bind when connecting to the server
+  ## If empty or not set, the local address is automatically chosen.
+  # local_address = ""
 
   ## Token for authentication.
   token = ""
@@ -67,6 +77,12 @@ to use them.
   ## Enable or disable uint support for writing uints influxdb 2.0.
   # influx_uint_support = false
 
+  ## When true, Telegraf will omit the timestamp on data to allow InfluxDB
+  ## to set the timestamp of the data during ingestion. This is generally NOT
+  ## what you want as it can lead to data points captured at different times
+  ## getting omitted due to similar data.
+  # influx_omit_timestamp = false
+
   ## HTTP/2 Timeouts
   ## The following values control the HTTP/2 client's timeouts. These settings
   ## are generally not required unless a user is seeing issues with client
@@ -91,5 +107,4 @@ to use them.
 
 Reference the [influx serializer][] for details about metric production.
 
-[InfluxDB v2.x]: https://github.com/influxdata/influxdb
 [influx serializer]: /plugins/serializers/influx/README.md#Metrics

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	clockutil "github.com/benbjohnson/clock"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 )
@@ -19,7 +20,7 @@ type CookieAuthConfig struct {
 	URL    string `toml:"cookie_auth_url"`
 	Method string `toml:"cookie_auth_method"`
 
-	Headers map[string]string `toml:"cookie_auth_headers"`
+	Headers map[string]*config.Secret `toml:"cookie_auth_headers"`
 
 	// HTTP Basic Auth Credentials
 	Username string `toml:"cookie_auth_username"`
@@ -97,11 +98,19 @@ func (c *CookieAuthConfig) auth() error {
 	}
 
 	for k, v := range c.Headers {
-		if strings.ToLower(k) == "host" {
-			req.Host = v
-		} else {
-			req.Header.Add(k, v)
+		secret, err := v.Get()
+		if err != nil {
+			return err
 		}
+
+		headerVal := secret.String()
+		if strings.EqualFold(k, "host") {
+			req.Host = headerVal
+		} else {
+			req.Header.Add(k, headerVal)
+		}
+
+		secret.Destroy()
 	}
 
 	resp, err := c.client.Do(req)

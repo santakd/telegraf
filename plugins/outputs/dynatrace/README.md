@@ -1,20 +1,28 @@
 # Dynatrace Output Plugin
 
-This plugin sends Telegraf metrics to [Dynatrace](https://www.dynatrace.com) via
-the [Dynatrace Metrics API V2][api-v2]. It may be run alongside the Dynatrace
+This plugin writes metrics to [Dynatrace][dynatrace] via the
+[Dynatrace Metrics API V2][api-v2]. It may be run alongside the Dynatrace
 OneAgent for automatic authentication or it may be run standalone on a host
-without a OneAgent by specifying a URL and API Token.  More information on the
-plugin can be found in the [Dynatrace documentation][docs].  All metrics are
-reported as gauges, unless they are specified to be delta counters using the
-`additional_counters` config option (see below).  See the [Dynatrace Metrics
-ingestion protocol documentation][proto-docs] for details on the types defined
-there.
+without OneAgent by specifying a URL and API Token.
 
-[api-v2]: https://www.dynatrace.com/support/help/dynatrace-api/environment-api/metric-v2/
+ More information on the plugin can be found in the
+ [Dynatrace documentation][docs].
 
-[docs]: https://www.dynatrace.com/support/help/how-to-use-dynatrace/metrics/metric-ingestion/ingestion-methods/telegraf/
+ > [!NOTE]
+ > All metrics are reported as gauges, unless they are specified to be delta
+ > counters using the `additional_counters` or `additional_counters_patterns`
+ > config option (see below).
+ > See the [Dynatrace Metrics ingestion protocol documentation][proto-docs]
+ > for details on the types defined there.
 
-[proto-docs]: https://www.dynatrace.com/support/help/how-to-use-dynatrace/metrics/metric-ingestion/metric-ingestion-protocol
+⭐ Telegraf v1.16.0
+🏷️ cloud, datastore
+💻 all
+
+[api-v2]: https://docs.dynatrace.com/docs/shortlink/api-metrics-v2
+[docs]: https://docs.dynatrace.com/docs/shortlink/telegraf
+[dynatrace]: https://www.dynatrace.com
+[proto-docs]: https://docs.dynatrace.com/docs/shortlink/metric-ingestion-protocol
 
 ## Requirements
 
@@ -87,9 +95,9 @@ The endpoint for the Dynatrace Metrics API v2 is
 ```
 
 You can learn more about how to use the Dynatrace API
-[here](https://www.dynatrace.com/support/help/dynatrace-api/).
+[here](https://docs.dynatrace.com/docs/shortlink/section-api).
 
-[api-auth]: https://www.dynatrace.com/support/help/dynatrace-api/basics/dynatrace-api-authentication/
+[api-auth]: https://docs.dynatrace.com/docs/shortlink/api-authentication
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -144,6 +152,10 @@ to use them.
   ## If you want metrics to be treated and reported as delta counters, add the metric names here
   additional_counters = [ ]
 
+  ## In addition or as an alternative to additional_counters, if you want metrics to be treated and
+  ## reported as delta counters using regular expression pattern matching
+  additional_counters_patterns = [ ]
+
   ## NOTE: Due to the way TOML is parsed, tables must be at the END of the
   ## plugin definition, otherwise additional config options are read as part of
   ## the table
@@ -170,7 +182,7 @@ then an API token is required.
 url = "https://{your-environment-id}.live.dynatrace.com/api/v2/metrics/ingest"
 ```
 
-[post-ingest]: https://www.dynatrace.com/support/help/dynatrace-api/environment-api/metric-v2/post-ingest-metrics/
+[post-ingest]: https://docs.dynatrace.com/docs/shortlink/api-metrics-v2-post-datapoints
 
 ### `api_token`
 
@@ -214,6 +226,18 @@ to this list.
 
 ```toml
 additional_counters = [ ]
+```
+
+### `additional_counters_patterns`
+
+*required*: `false`
+
+In addition or as an alternative to additional_counters, if you want a metric
+to be treated and reported as a delta counter using regular expression,
+add its pattern to this list.
+
+```toml
+additional_counters_patterns = [ ]
 ```
 
 ### `default_dimensions`

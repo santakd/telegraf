@@ -6,11 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/shirou/gopsutil/v3/cpu"
-	"github.com/shirou/gopsutil/v3/disk"
-	"github.com/shirou/gopsutil/v3/host"
-	"github.com/shirou/gopsutil/v3/mem"
-	"github.com/shirou/gopsutil/v3/net"
+	"github.com/shirou/gopsutil/v4/cpu"
+	"github.com/shirou/gopsutil/v4/disk"
+	"github.com/shirou/gopsutil/v4/mem"
+	"github.com/shirou/gopsutil/v4/net"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/internal"
@@ -26,7 +25,6 @@ type PS interface {
 	SwapStat() (*mem.SwapMemoryStat, error)
 	NetConnections() ([]net.ConnectionStat, error)
 	NetConntrack(perCPU bool) ([]net.ConntrackStat, error)
-	Temperature() ([]host.TemperatureStat, error)
 }
 
 type PSDiskDeps interface {
@@ -91,11 +89,7 @@ func newSet() *set {
 	return s
 }
 
-func (s *SystemPS) DiskUsage(
-	mountPointFilter []string,
-	mountOptsExclude []string,
-	fstypeExclude []string,
-) ([]*disk.UsageStat, []*disk.PartitionStat, error) {
+func (s *SystemPS) DiskUsage(mountPointFilter, mountOptsExclude, fstypeExclude []string) ([]*disk.UsageStat, []*disk.PartitionStat, error) {
 	parts, err := s.Partitions(true)
 	if err != nil {
 		return nil, nil, err
@@ -212,17 +206,6 @@ func (s *SystemPS) VMStat() (*mem.VirtualMemoryStat, error) {
 
 func (s *SystemPS) SwapStat() (*mem.SwapMemoryStat, error) {
 	return mem.SwapMemory()
-}
-
-func (s *SystemPS) Temperature() ([]host.TemperatureStat, error) {
-	temp, err := host.SensorsTemperatures()
-	if err != nil {
-		var hostWarnings *host.Warnings
-		if !errors.As(err, &hostWarnings) {
-			return temp, err
-		}
-	}
-	return temp, nil
 }
 
 func (s *SystemPSDisk) Partitions(all bool) ([]disk.PartitionStat, error) {

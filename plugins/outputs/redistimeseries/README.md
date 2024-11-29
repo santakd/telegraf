@@ -1,6 +1,12 @@
-# RedisTimeSeries Producer Output Plugin
+# Redis Time Series Output Plugin
 
-The RedisTimeSeries output plugin writes metrics to the RedisTimeSeries server.
+This plugin writes metrics to a [Redis time-series][redists] server.
+
+⭐ Telegraf v1.0.0
+🏷️ datastore
+💻 all
+
+[redists]: https://redis.io/timeseries
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -32,6 +38,14 @@ to use them.
   # username = ""
   # password = ""
   # database = 0
+
+  ## Timeout for operations such as ping or sending metrics
+  # timeout = "10s"
+
+  ## Enable attempt to convert string fields to numeric values
+  ## If "false" or in case the string value cannot be converted the string
+  ## field will be dropped.
+  # convert_string_fields = true
 
   ## Optional TLS Config
   # tls_ca = "/etc/telegraf/ca.pem"

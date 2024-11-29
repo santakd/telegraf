@@ -7,22 +7,23 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
-	awsV2 "github.com/aws/aws-sdk-go-v2/aws"
-	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	aws_signer "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"golang.org/x/oauth2"
 	"google.golang.org/api/idtoken"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
-	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
-	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
+	common_aws "github.com/influxdata/telegraf/plugins/common/aws"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/outputs"
 	"github.com/influxdata/telegraf/plugins/serializers"
 )
@@ -42,23 +43,23 @@ const (
 )
 
 type HTTP struct {
-	URL                     string            `toml:"url"`
-	Method                  string            `toml:"method"`
-	Username                config.Secret     `toml:"username"`
-	Password                config.Secret     `toml:"password"`
-	Headers                 map[string]string `toml:"headers"`
-	ContentEncoding         string            `toml:"content_encoding"`
-	UseBatchFormat          bool              `toml:"use_batch_format"`
-	AwsService              string            `toml:"aws_service"`
-	NonRetryableStatusCodes []int             `toml:"non_retryable_statuscodes"`
-	httpconfig.HTTPClientConfig
+	URL                     string                    `toml:"url"`
+	Method                  string                    `toml:"method"`
+	Username                config.Secret             `toml:"username"`
+	Password                config.Secret             `toml:"password"`
+	Headers                 map[string]*config.Secret `toml:"headers"`
+	ContentEncoding         string                    `toml:"content_encoding"`
+	UseBatchFormat          bool                      `toml:"use_batch_format"`
+	AwsService              string                    `toml:"aws_service"`
+	NonRetryableStatusCodes []int                     `toml:"non_retryable_statuscodes"`
+	common_http.HTTPClientConfig
 	Log telegraf.Logger `toml:"-"`
 
 	client     *http.Client
 	serializer serializers.Serializer
 
-	awsCfg *awsV2.Config
-	internalaws.CredentialConfig
+	awsCfg *aws.Config
+	common_aws.CredentialConfig
 
 	// Google API Auth
 	CredentialsFile string `toml:"google_application_credentials"`
@@ -101,15 +102,16 @@ func (h *HTTP) Connect() error {
 }
 
 func (h *HTTP) Close() error {
+	if h.client != nil {
+		h.client.CloseIdleConnections()
+	}
+
 	return nil
 }
 
 func (h *HTTP) Write(metrics []telegraf.Metric) error {
-	var reqBody []byte
-
 	if h.UseBatchFormat {
-		var err error
-		reqBody, err = h.serializer.SerializeBatch(metrics)
+		reqBody, err := h.serializer.SerializeBatch(metrics)
 		if err != nil {
 			return err
 		}
@@ -118,8 +120,7 @@ func (h *HTTP) Write(metrics []telegraf.Metric) error {
 	}
 
 	for _, metric := range metrics {
-		var err error
-		reqBody, err = h.serializer.Serialize(metric)
+		reqBody, err := h.serializer.Serialize(metric)
 		if err != nil {
 			return err
 		}
@@ -154,7 +155,7 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 		reqBodyBuffer = buf
 
 		// sha256 is hex encoded
-		hash := fmt.Sprintf("%x", sum)
+		hash := hex.EncodeToString(sum[:])
 		payloadHash = &hash
 	}
 
@@ -164,7 +165,7 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 	}
 
 	if h.awsCfg != nil {
-		signer := v4.NewSigner()
+		signer := aws_signer.NewSigner()
 		ctx := context.Background()
 
 		credentials, err := h.awsCfg.Credentials.Retrieve(ctx)
@@ -185,12 +186,12 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 		}
 		password, err := h.Password.Get()
 		if err != nil {
-			config.ReleaseSecret(username)
+			username.Destroy()
 			return fmt.Errorf("getting password failed: %w", err)
 		}
-		req.SetBasicAuth(string(username), string(password))
-		config.ReleaseSecret(username)
-		config.ReleaseSecret(password)
+		req.SetBasicAuth(username.String(), password.String())
+		username.Destroy()
+		password.Destroy()
 	}
 
 	// google api auth
@@ -207,11 +208,20 @@ func (h *HTTP) writeMetric(reqBody []byte) error {
 	if h.ContentEncoding == "gzip" {
 		req.Header.Set("Content-Encoding", "gzip")
 	}
+
 	for k, v := range h.Headers {
-		if strings.ToLower(k) == "host" {
-			req.Host = v
+		secret, err := v.Get()
+		if err != nil {
+			return err
 		}
-		req.Header.Set(k, v)
+
+		headerVal := secret.String()
+		if strings.EqualFold(k, "host") {
+			req.Host = headerVal
+		}
+		req.Header.Set(k, headerVal)
+
+		secret.Destroy()
 	}
 
 	resp, err := h.client.Do(req)

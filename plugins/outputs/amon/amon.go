@@ -5,6 +5,7 @@ import (
 	"bytes"
 	_ "embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -44,7 +45,7 @@ func (*Amon) SampleConfig() string {
 
 func (a *Amon) Connect() error {
 	if a.ServerKey == "" || a.AmonInstance == "" {
-		return fmt.Errorf("serverkey and amon_instance are required fields for amon output")
+		return errors.New("serverkey and amon_instance are required fields for amon output")
 	}
 	a.client = &http.Client{
 		Transport: &http.Transport{
@@ -59,10 +60,9 @@ func (a *Amon) Write(metrics []telegraf.Metric) error {
 	if len(metrics) == 0 {
 		return nil
 	}
-	ts := TimeSeries{}
-	tempSeries := []*Metric{}
-	metricCounter := 0
 
+	metricCounter := 0
+	tempSeries := make([]*Metric, 0, len(metrics))
 	for _, m := range metrics {
 		mname := strings.ReplaceAll(m.Name(), "_", ".")
 		if amonPts, err := buildMetrics(m); err == nil {
@@ -79,6 +79,7 @@ func (a *Amon) Write(metrics []telegraf.Metric) error {
 		}
 	}
 
+	ts := TimeSeries{}
 	ts.Series = make([]*Metric, metricCounter)
 	copy(ts.Series, tempSeries[0:])
 	tsBytes, err := json.Marshal(ts)
@@ -134,7 +135,7 @@ func (p *Point) setValue(v interface{}) error {
 	case float64:
 		p[1] = d
 	default:
-		return fmt.Errorf("undeterminable type")
+		return errors.New("undeterminable type")
 	}
 	return nil
 }

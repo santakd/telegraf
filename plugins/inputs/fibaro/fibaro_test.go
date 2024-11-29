@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/require"
 )
 
 // TestUnauthorized validates that 401 (wrong credentials) is managed properly
 func TestUnauthorized(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
 	}))
 	defer ts.Close()
@@ -41,20 +42,35 @@ func TestJSONSuccess(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/sections":
 			content, err := os.ReadFile(path.Join("testdata", "sections.json"))
-			require.NoError(t, err)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 			payload = string(content)
 		case "/api/rooms":
 			content, err := os.ReadFile(path.Join("testdata", "rooms.json"))
-			require.NoError(t, err)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 			payload = string(content)
 		case "/api/devices":
 			content, err := os.ReadFile(path.Join("testdata", "device_hc2.json"))
-			require.NoError(t, err)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 			payload = string(content)
 		}
 		w.WriteHeader(http.StatusOK)
-		_, err := fmt.Fprintln(w, payload)
-		require.NoError(t, err)
+		if _, err := fmt.Fprintln(w, payload); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer ts.Close()
 
@@ -157,20 +173,35 @@ func TestHC3JSON(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/sections":
 			content, err := os.ReadFile(path.Join("testdata", "sections.json"))
-			require.NoError(t, err)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 			payload = string(content)
 		case "/api/rooms":
 			content, err := os.ReadFile(path.Join("testdata", "rooms.json"))
-			require.NoError(t, err)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 			payload = string(content)
 		case "/api/devices":
 			content, err := os.ReadFile(path.Join("testdata", "device_hc3.json"))
-			require.NoError(t, err)
+			if err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 			payload = string(content)
 		}
 		w.WriteHeader(http.StatusOK)
-		_, err := fmt.Fprintln(w, payload)
-		require.NoError(t, err)
+		if _, err := fmt.Fprintln(w, payload); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer ts.Close()
 

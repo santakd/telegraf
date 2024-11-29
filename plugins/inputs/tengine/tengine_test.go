@@ -18,23 +18,26 @@ const tengineSampleResponse = `127.0.0.1,784,1511,2,2,1,0,1,0,0,0,0,0,0,1,0,0,0,
 // Verify that tengine tags are properly parsed based on the server
 func TestTengineTags(t *testing.T) {
 	urls := []string{"http://localhost/us", "http://localhost:80/us"}
-	var addr *url.URL
 	for _, url1 := range urls {
-		addr, _ = url.Parse(url1)
+		addr, err := url.Parse(url1)
+		require.NoError(t, err)
 		tagMap := getTags(addr, "127.0.0.1")
 		require.Contains(t, tagMap["server"], "localhost")
 	}
 }
 
 func TestTengineGeneratesMetrics(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, err := fmt.Fprintln(w, tengineSampleResponse)
-		require.NoError(t, err)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := fmt.Fprintln(w, tengineSampleResponse); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer ts.Close()
 
 	n := &Tengine{
-		Urls: []string{fmt.Sprintf("%s/us", ts.URL)},
+		Urls: []string{ts.URL + "/us"},
 	}
 
 	var accTengine testutil.Accumulator

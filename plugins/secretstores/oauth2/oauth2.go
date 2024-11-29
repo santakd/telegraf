@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
@@ -102,7 +103,7 @@ func (o *OAuth2) Init() error {
 		}
 
 		// Check service specific parameters
-		if strings.ToLower(o.Service) == "auth0" {
+		if strings.EqualFold(o.Service, "auth0") {
 			if audience := c.Params["audience"]; audience == "" {
 				return fmt.Errorf("'audience' parameter in key %q missing for service Auth0", c.Key)
 			}
@@ -120,19 +121,21 @@ func (o *OAuth2) Init() error {
 
 		csecret, err := c.ClientSecret.Get()
 		if err != nil {
+			cid.Destroy()
 			return fmt.Errorf("getting client secret for %q failed: %w", c.Key, err)
 		}
 
 		// Setup the configuration
 		cfg := &clientcredentials.Config{
-			ClientID:     string(cid),
-			ClientSecret: string(csecret),
-			TokenURL:     endpoint.TokenURL,
-			Scopes:       c.Scopes,
-			AuthStyle:    endpoint.AuthStyle,
+			ClientID:       cid.String(),
+			ClientSecret:   csecret.String(),
+			TokenURL:       endpoint.TokenURL,
+			Scopes:         c.Scopes,
+			AuthStyle:      endpoint.AuthStyle,
+			EndpointParams: url.Values{},
 		}
-		config.ReleaseSecret(cid)
-		config.ReleaseSecret(csecret)
+		cid.Destroy()
+		csecret.Destroy()
 
 		// Add the parameters if any
 		for k, v := range c.Params {

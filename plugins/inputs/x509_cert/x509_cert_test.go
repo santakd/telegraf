@@ -27,7 +27,7 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
-	_tls "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/testutil"
 )
 
@@ -44,7 +44,7 @@ func TestGatherRemoteIntegration(t *testing.T) {
 
 	defer os.Remove(tmpfile.Name())
 
-	_, err = tmpfile.Write([]byte(pki.ReadServerCert()))
+	_, err = tmpfile.WriteString(pki.ReadServerCert())
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -78,7 +78,7 @@ func TestGatherRemoteIntegration(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if test.unset {
 				cfg.Certificates = nil
-				cfg.GetCertificate = func(i *tls.ClientHelloInfo) (*tls.Certificate, error) {
+				cfg.GetCertificate = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 					return nil, nil
 				}
 			}
@@ -89,18 +89,25 @@ func TestGatherRemoteIntegration(t *testing.T) {
 
 			go func() {
 				sconn, err := ln.Accept()
-				require.NoError(t, err)
+				if err != nil {
+					t.Error(err)
+					return
+				}
+
 				if test.close {
 					sconn.Close()
 				}
 
 				serverConfig := cfg.Clone()
-
 				srv := tls.Server(sconn, serverConfig)
 				if test.noshake {
 					srv.Close()
 				}
-				require.NoError(t, srv.Handshake())
+
+				if err = srv.Handshake(); err != nil {
+					t.Error(err)
+					return
+				}
 			}()
 
 			if test.server == "" {
@@ -160,7 +167,7 @@ func TestGatherLocal(t *testing.T) {
 			f, err := os.CreateTemp("", "x509_cert")
 			require.NoError(t, err)
 
-			_, err = f.Write([]byte(test.content))
+			_, err = f.WriteString(test.content)
 			require.NoError(t, err)
 
 			if runtime.GOOS != "windows" {
@@ -193,7 +200,7 @@ func TestTags(t *testing.T) {
 	f, err := os.CreateTemp("", "x509_cert")
 	require.NoError(t, err)
 
-	_, err = f.Write([]byte(cert))
+	_, err = f.WriteString(cert)
 	require.NoError(t, err)
 
 	require.NoError(t, f.Close())
@@ -242,7 +249,7 @@ func TestGatherExcludeRootCerts(t *testing.T) {
 	f, err := os.CreateTemp("", "x509_cert")
 	require.NoError(t, err)
 
-	_, err = f.Write([]byte(cert))
+	_, err = f.WriteString(cert)
 	require.NoError(t, err)
 
 	require.NoError(t, f.Close())
@@ -260,7 +267,7 @@ func TestGatherExcludeRootCerts(t *testing.T) {
 	require.NoError(t, sc.Gather(&acc))
 
 	require.True(t, acc.HasMeasurement("x509_cert"))
-	require.Equal(t, acc.NMetrics(), uint64(1))
+	require.Equal(t, uint64(1), acc.NMetrics())
 }
 
 func TestGatherChain(t *testing.T) {
@@ -279,7 +286,7 @@ func TestGatherChain(t *testing.T) {
 			f, err := os.CreateTemp("", "x509_cert")
 			require.NoError(t, err)
 
-			_, err = f.Write([]byte(test.content))
+			_, err = f.WriteString(test.content)
 			require.NoError(t, err)
 
 			require.NoError(t, f.Close())
@@ -318,7 +325,9 @@ func TestGatherUDPCertIntegration(t *testing.T) {
 	defer listener.Close()
 
 	go func() {
-		_, _ = listener.Accept()
+		if _, err := listener.Accept(); err != nil {
+			t.Error(err)
+		}
 	}()
 
 	m := &X509Cert{
@@ -330,13 +339,13 @@ func TestGatherUDPCertIntegration(t *testing.T) {
 	var acc testutil.Accumulator
 	require.NoError(t, m.Gather(&acc))
 
-	require.Len(t, acc.Errors, 0)
+	require.Empty(t, acc.Errors)
 	require.True(t, acc.HasMeasurement("x509_cert"))
 	require.True(t, acc.HasTag("x509_cert", "ocsp_stapled"))
 }
 
 func TestGatherTCPCert(t *testing.T) {
-	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer ts.Close()
@@ -350,7 +359,7 @@ func TestGatherTCPCert(t *testing.T) {
 	var acc testutil.Accumulator
 	require.NoError(t, m.Gather(&acc))
 
-	require.Len(t, acc.Errors, 0)
+	require.Empty(t, acc.Errors)
 	require.True(t, acc.HasMeasurement("x509_cert"))
 }
 
@@ -431,8 +440,8 @@ func TestSourcesToURLs(t *testing.T) {
 	for _, p := range m.locations {
 		actual = append(actual, p.String())
 	}
-	require.Equal(t, len(m.globpaths), 5)
-	require.Equal(t, len(m.locations), 3)
+	require.Len(t, m.globpaths, 5)
+	require.Len(t, m.locations, 3)
 	require.ElementsMatch(t, expected, actual)
 }
 
@@ -451,13 +460,12 @@ func TestServerName(t *testing.T) {
 		{name: "errors", fromCfg: "otherex.com", fromTLS: "example.com", url: "https://other.example.com", err: true},
 	}
 
-	for _, elt := range tests {
-		test := elt
+	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			sc := &X509Cert{
 				Sources:      []string{test.url},
 				ServerName:   test.fromCfg,
-				ClientConfig: _tls.ClientConfig{ServerName: test.fromTLS},
+				ClientConfig: common_tls.ClientConfig{ServerName: test.fromTLS},
 				Log:          testutil.Logger{},
 			}
 			err := sc.Init()
@@ -569,7 +577,7 @@ func TestClassification(t *testing.T) {
 	certURI := "file://" + filepath.Join(tmpDir, "cert.pem")
 	plugin := &X509Cert{
 		Sources: []string{certURI},
-		ClientConfig: _tls.ClientConfig{
+		ClientConfig: common_tls.ClientConfig{
 			TLSCA: filepath.Join(tmpDir, "ca.pem"),
 		},
 		Log: testutil.Logger{},

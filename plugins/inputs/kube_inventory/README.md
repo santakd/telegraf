@@ -52,22 +52,18 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## If empty in-cluster config with POD's service account token will be used.
   # url = ""
 
+  ## URL for the kubelet, if set it will be used to collect the pods resource metrics
+  # url_kubelet = "http://127.0.0.1:10255"
+
   ## Namespace to use. Set to "" to use all namespaces.
   # namespace = "default"
 
-  ## Use bearer token for authorization. ('bearer_token' takes priority)
-  ##
+  ## Node name to filter to. No filtering by default.
+  # node_name = ""
+
+  ## Use bearer token for authorization.
   ## Ignored if url is empty and in-cluster config is used.
-  ##
-  ## If both of these are empty, we'll use the default serviceaccount:
-  ## at: /var/run/secrets/kubernetes.io/serviceaccount/token
-  ##
-  ## To auto-refresh the token, please use a file with the bearer_token option.
-  ## If given a string, Telegraf cannot refresh the token periodically.
   # bearer_token = "/var/run/secrets/kubernetes.io/serviceaccount/token"
-  ## OR
-  ## deprecated in 1.24.0; use bearer_token with a file
-  # bearer_token_string = "abc_123"
 
   ## Set response_timeout (default 5 seconds)
   # response_timeout = "5s"
@@ -102,7 +98,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   # insecure_skip_verify = false
 
   ## Uncomment to remove deprecated metrics.
-  # fielddrop = ["terminated_reason"]
+  # fieldexclude = ["terminated_reason"]
 ```
 
 ## Kubernetes Permissions
@@ -112,7 +108,6 @@ list "persistentvolumes" and "nodes". You will then need to make an [aggregated
 ClusterRole][agg] that will eventually be bound to a user or group.
 
 [rbac]: https://kubernetes.io/docs/reference/access-authn-authz/rbac/
-
 [agg]: https://kubernetes.io/docs/reference/access-authn-authz/rbac/#aggregated-clusterroles
 
 ```yaml
@@ -165,7 +160,7 @@ subjects:
 
 When monitoring [k3s](https://k3s.io) server instances one can re-use already
 generated administration token. This is less secure than using the more
-restrictive dedicated telegraf user but more convienient to set up.
+restrictive dedicated telegraf user but more convenient to set up.
 
 ```console
 # replace `telegraf` with the user the telegraf process is running as
@@ -361,15 +356,15 @@ tls_key = "/run/telegraf-kubernetes-key"
     - enddate
     - verification_code
 
-### kuberntes node status `status`
+### kubernetes node status `status`
 
 The node status ready can mean 3 different values.
 
-| Tag value | Corresponding field value |  Meaning |
-| --------- | ------------------------- |  -------
-| ready     | 0                         |  NotReady|
-| ready     | 1                         |  Ready   |
-| ready     | 2                         |  Unknown |
+| Tag value | Corresponding field value | Meaning  |
+| --------- | ------------------------- | -------- |
+| ready     | 0                         | NotReady |
+| ready     | 1                         | Ready    |
+| ready     | 2                         | Unknown  |
 
 ### pv `phase_type`
 

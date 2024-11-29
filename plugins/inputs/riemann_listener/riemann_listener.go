@@ -16,14 +16,14 @@ import (
 	"sync"
 	"time"
 
-	riemanngo "github.com/riemann/riemann-go-client"
-	riemangoProto "github.com/riemann/riemann-go-client/proto"
+	riemann "github.com/riemann/riemann-go-client"
+	rieman_proto "github.com/riemann/riemann-go-client/proto"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/metric"
-	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
@@ -37,7 +37,7 @@ type RiemannSocketListener struct {
 	ReadTimeout     *config.Duration `toml:"read_timeout"`
 	KeepAlivePeriod *config.Duration `toml:"keep_alive_period"`
 	SocketMode      string           `toml:"socket_mode"`
-	tlsint.ServerConfig
+	common_tls.ServerConfig
 
 	wg sync.WaitGroup
 
@@ -60,7 +60,7 @@ type riemannListener struct {
 }
 
 func (rsl *riemannListener) listen(ctx context.Context) {
-	rsl.connections = map[string]net.Conn{}
+	rsl.connections = make(map[string]net.Conn)
 
 	wg := sync.WaitGroup{}
 
@@ -148,7 +148,7 @@ func (rsl *riemannListener) removeConnection(c net.Conn) {
 	rsl.connectionsMtx.Unlock()
 }
 
-//Utilities
+// Utilities
 
 /*
 readMessages will read Riemann messages in binary format
@@ -178,7 +178,7 @@ func (rsl *riemannListener) read(conn net.Conn) {
 			}
 		}
 
-		messagePb := &riemangoProto.Msg{}
+		messagePb := &rieman_proto.Msg{}
 		var header uint32
 		// First obtain the size of the riemann event from client and acknowledge
 		if err = binary.Read(conn, binary.BigEndian, &header); err != nil {
@@ -201,23 +201,24 @@ func (rsl *riemannListener) read(conn net.Conn) {
 			rsl.riemannReturnErrorResponse(conn, "Failed to unmarshal")
 			return
 		}
-		riemannEvents := riemanngo.ProtocolBuffersToEvents(messagePb.Events)
+		riemannEvents := riemann.ProtocolBuffersToEvents(messagePb.Events)
 
 		for _, m := range riemannEvents {
 			if m.Service == "" {
 				rsl.riemannReturnErrorResponse(conn, "No Service Name")
 				return
 			}
-			tags := make(map[string]string)
-			fieldValues := map[string]interface{}{}
+			tags := make(map[string]string, len(m.Tags)+3)
 			for _, tag := range m.Tags {
 				tags[strings.ReplaceAll(tag, " ", "_")] = tag
 			}
 			tags["Host"] = m.Host
 			tags["Description"] = m.Description
 			tags["State"] = m.State
-			fieldValues["Metric"] = m.Metric
-			fieldValues["TTL"] = m.TTL.Seconds()
+			fieldValues := map[string]interface{}{
+				"Metric": m.Metric,
+				"TTL":    m.TTL.Seconds(),
+			}
 			singleMetric := metric.New(m.Service, tags, fieldValues, m.Time, telegraf.Untyped)
 			rsl.AddMetric(singleMetric)
 		}
@@ -227,7 +228,7 @@ func (rsl *riemannListener) read(conn net.Conn) {
 
 func (rsl *riemannListener) riemannReturnResponse(conn net.Conn) {
 	t := true
-	message := new(riemangoProto.Msg)
+	message := new(rieman_proto.Msg)
 	message.Ok = &t
 	returnData, err := proto.Marshal(message)
 	if err != nil {
@@ -249,7 +250,7 @@ func (rsl *riemannListener) riemannReturnResponse(conn net.Conn) {
 
 func (rsl *riemannListener) riemannReturnErrorResponse(conn net.Conn, errorMessage string) {
 	t := false
-	message := new(riemangoProto.Msg)
+	message := new(rieman_proto.Msg)
 	message.Ok = &t
 	message.Error = &errorMessage
 	returnData, err := proto.Marshal(message)

@@ -107,9 +107,8 @@ func (rs *RunningStats) Median() float64 {
 		return 0
 	} else if count%2 == 0 {
 		return (values[count/2-1] + values[count/2]) / 2
-	} else {
-		return values[count/2]
 	}
+	return values[count/2]
 }
 
 func (rs *RunningStats) Variance() float64 {
@@ -147,15 +146,5 @@ func (rs *RunningStats) Percentile(n float64) float64 {
 	}
 
 	i := float64(len(rs.perc)) * n / float64(100)
-	return rs.perc[clamp(i, 0, len(rs.perc)-1)]
-}
-
-func clamp(i float64, min int, max int) int {
-	if i < float64(min) {
-		return min
-	}
-	if i > float64(max) {
-		return max
-	}
-	return int(i)
+	return rs.perc[max(0, min(int(i), len(rs.perc)-1))]
 }

@@ -20,19 +20,19 @@ import (
 //go:embed sample.conf
 var sampleConfig string
 
-// Ipsets is a telegraf plugin to gather packets and bytes counters from ipset
-type Ipset struct {
-	IncludeUnmatchedSets bool
-	UseSudo              bool
-	Timeout              config.Duration
-	lister               setLister
-}
-
-type setLister func(Timeout config.Duration, UseSudo bool) (*bytes.Buffer, error)
+var defaultTimeout = config.Duration(time.Second)
 
 const measurement = "ipset"
 
-var defaultTimeout = config.Duration(time.Second)
+type Ipset struct {
+	IncludeUnmatchedSets bool            `toml:"include_unmatched_sets"`
+	UseSudo              bool            `toml:"use_sudo"`
+	Timeout              config.Duration `toml:"timeout"`
+
+	lister setLister
+}
+
+type setLister func(Timeout config.Duration, UseSudo bool) (*bytes.Buffer, error)
 
 func (*Ipset) SampleConfig() string {
 	return sampleConfig
@@ -73,18 +73,31 @@ func (i *Ipset) Gather(acc telegraf.Accumulator) error {
 				"set":  data[1],
 				"rule": data[2],
 			}
-			packetsTotal, err := strconv.ParseUint(data[4], 10, 64)
-			if err != nil {
-				acc.AddError(err)
+
+			fields := make(map[string]interface{}, 3)
+			for i, field := range data {
+				switch field {
+				case "timeout":
+					val, err := strconv.ParseUint(data[i+1], 10, 64)
+					if err != nil {
+						acc.AddError(err)
+					}
+					fields["timeout"] = val
+				case "packets":
+					val, err := strconv.ParseUint(data[i+1], 10, 64)
+					if err != nil {
+						acc.AddError(err)
+					}
+					fields["packets_total"] = val
+				case "bytes":
+					val, err := strconv.ParseUint(data[i+1], 10, 64)
+					if err != nil {
+						acc.AddError(err)
+					}
+					fields["bytes_total"] = val
+				}
 			}
-			bytesTotal, err := strconv.ParseUint(data[6], 10, 64)
-			if err != nil {
-				acc.AddError(err)
-			}
-			fields := map[string]interface{}{
-				"packets_total": packetsTotal,
-				"bytes_total":   bytesTotal,
-			}
+
 			acc.AddCounter(measurement, fields, tags)
 		}
 	}

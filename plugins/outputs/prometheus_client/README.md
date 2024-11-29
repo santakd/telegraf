@@ -1,7 +1,14 @@
 # Prometheus Output Plugin
 
-This plugin starts a [Prometheus](https://prometheus.io/) Client, it exposes all
-metrics on `/metrics` (default) to be polled by a Prometheus server.
+This plugin starts a [Prometheus][prometheus] client and exposes the written
+metrics on a `/metrics` endpoint by default. This endpoint can then be polled
+by a Prometheus server.
+
+⭐ Telegraf v0.2.1
+🏷️ applications
+💻 all
+
+[prometheus]: https://prometheus.io
 
 ## Global configuration options <!-- @/docs/includes/plugin_config.md -->
 
@@ -26,6 +33,9 @@ to use them.
 # Configuration for the Prometheus client to spawn
 [[outputs.prometheus_client]]
   ## Address to listen on.
+  ##   ex:
+  ##     listen = ":9273"
+  ##     listen = "vsock://:9273"
   listen = ":9273"
 
   ## Maximum duration before timing out read of the request
@@ -73,7 +83,7 @@ to use them.
 
   ## Specify the metric type explicitly.
   ## This overrides the metric-type of the Telegraf metric. Globbing is allowed.
-  # [outputs.prometheus_client.prometheus_metric_types]
+  # [outputs.prometheus_client.metric_types]
   #   counter = []
   #   gauge = []
 ```

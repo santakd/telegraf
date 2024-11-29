@@ -26,10 +26,11 @@ const maxStderrBytes = 512
 
 // Exec defines the exec output plugin.
 type Exec struct {
-	Command     []string        `toml:"command"`
-	Environment []string        `toml:"environment"`
-	Timeout     config.Duration `toml:"timeout"`
-	Log         telegraf.Logger `toml:"-"`
+	Command        []string        `toml:"command"`
+	Environment    []string        `toml:"environment"`
+	Timeout        config.Duration `toml:"timeout"`
+	UseBatchFormat bool            `toml:"use_batch_format"`
+	Log            telegraf.Logger `toml:"-"`
 
 	runner     Runner
 	serializer serializers.Serializer
@@ -63,17 +64,32 @@ func (e *Exec) Close() error {
 // Write writes the metrics to the configured command.
 func (e *Exec) Write(metrics []telegraf.Metric) error {
 	var buffer bytes.Buffer
-	serializedMetrics, err := e.serializer.SerializeBatch(metrics)
-	if err != nil {
-		return err
-	}
-	buffer.Write(serializedMetrics)
+	if e.UseBatchFormat {
+		serializedMetrics, err := e.serializer.SerializeBatch(metrics)
+		if err != nil {
+			return err
+		}
+		buffer.Write(serializedMetrics)
 
-	if buffer.Len() <= 0 {
-		return nil
-	}
+		if buffer.Len() <= 0 {
+			return nil
+		}
 
-	return e.runner.Run(time.Duration(e.Timeout), e.Command, e.Environment, &buffer)
+		return e.runner.Run(time.Duration(e.Timeout), e.Command, e.Environment, &buffer)
+	}
+	errs := make([]error, 0, len(metrics))
+	for _, metric := range metrics {
+		serializedMetric, err := e.serializer.Serialize(metric)
+		if err != nil {
+			return err
+		}
+		buffer.Reset()
+		buffer.Write(serializedMetric)
+
+		err = e.runner.Run(time.Duration(e.Timeout), e.Command, e.Environment, &buffer)
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // Runner provides an interface for running exec.Cmd.
@@ -88,7 +104,7 @@ type CommandRunner struct {
 }
 
 // Run runs the command.
-func (c *CommandRunner) Run(timeout time.Duration, command []string, environments []string, buffer io.Reader) error {
+func (c *CommandRunner) Run(timeout time.Duration, command, environments []string, buffer io.Reader) error {
 	cmd := exec.Command(command[0], command[1:]...)
 	if len(environments) > 0 {
 		cmd.Env = append(os.Environ(), environments...)
@@ -107,7 +123,7 @@ func (c *CommandRunner) Run(timeout time.Duration, command []string, environment
 
 		s = removeWindowsCarriageReturns(s)
 		if s.Len() > 0 {
-			if !telegraf.Debug {
+			if c.log.Level() < telegraf.Debug {
 				c.log.Errorf("Command error: %q", c.truncate(s))
 			} else {
 				c.log.Debugf("Command error: %q", s)
@@ -149,7 +165,8 @@ func (c *CommandRunner) truncate(buf bytes.Buffer) string {
 func init() {
 	outputs.Add("exec", func() telegraf.Output {
 		return &Exec{
-			Timeout: config.Duration(time.Second * 5),
+			Timeout:        config.Duration(time.Second * 5),
+			UseBatchFormat: true,
 		}
 	})
 }
@@ -163,7 +180,7 @@ func removeWindowsCarriageReturns(b bytes.Buffer) bytes.Buffer {
 			byt, err := b.ReadBytes(0x0D)
 			byt = bytes.TrimRight(byt, "\x0d")
 			if len(byt) > 0 {
-				_, _ = buf.Write(byt)
+				buf.Write(byt)
 			}
 			if errors.Is(err, io.EOF) {
 				return buf

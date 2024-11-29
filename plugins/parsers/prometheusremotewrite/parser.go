@@ -1,6 +1,7 @@
 package prometheusremotewrite
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"time"
@@ -29,7 +30,7 @@ func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 	now := time.Now()
 
 	for _, ts := range req.Timeseries {
-		tags := map[string]string{}
+		tags := make(map[string]string, len(p.DefaultTags)+len(ts.Labels))
 		for key, value := range p.DefaultTags {
 			tags[key] = value
 		}
@@ -43,7 +44,7 @@ func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 			return nil, fmt.Errorf("metric name %q not found in tag-set or empty", model.MetricNameLabel)
 		}
 		delete(tags, model.MetricNameLabel)
-
+		t := now
 		for _, s := range ts.Samples {
 			fields := make(map[string]interface{})
 			if !math.IsNaN(s.Value) {
@@ -51,11 +52,50 @@ func (p *Parser) Parse(buf []byte) ([]telegraf.Metric, error) {
 			}
 			// converting to telegraf metric
 			if len(fields) > 0 {
-				t := now
 				if s.Timestamp > 0 {
 					t = time.Unix(0, s.Timestamp*1000000)
 				}
 				m := metric.New("prometheus_remote_write", tags, fields, t)
+				metrics = append(metrics, m)
+			}
+		}
+
+		for _, hp := range ts.Histograms {
+			h := hp.ToFloatHistogram()
+
+			if hp.Timestamp > 0 {
+				t = time.Unix(0, hp.Timestamp*1000000)
+			}
+
+			fields := map[string]any{
+				metricName + "_sum": h.Sum,
+			}
+			m := metric.New("prometheus_remote_write", tags, fields, t)
+			metrics = append(metrics, m)
+
+			fields = map[string]any{
+				metricName + "_count": h.Count,
+			}
+			m = metric.New("prometheus_remote_write", tags, fields, t)
+			metrics = append(metrics, m)
+
+			count := 0.0
+			iter := h.AllBucketIterator()
+			for iter.Next() {
+				bucket := iter.At()
+
+				count = count + bucket.Count
+				fields = map[string]any{
+					metricName: count,
+				}
+
+				localTags := make(map[string]string, len(tags)+1)
+				localTags[metricName+"_le"] = fmt.Sprintf("%g", bucket.Upper)
+				for k, v := range tags {
+					localTags[k] = v
+				}
+
+				m := metric.New("prometheus_remote_write", localTags, fields, t)
 				metrics = append(metrics, m)
 			}
 		}
@@ -70,11 +110,11 @@ func (p *Parser) ParseLine(line string) (telegraf.Metric, error) {
 	}
 
 	if len(metrics) < 1 {
-		return nil, fmt.Errorf("no metrics in line")
+		return nil, errors.New("no metrics in line")
 	}
 
 	if len(metrics) > 1 {
-		return nil, fmt.Errorf("more than one metric in line")
+		return nil, errors.New("more than one metric in line")
 	}
 
 	return metrics[0], nil
@@ -86,7 +126,7 @@ func (p *Parser) SetDefaultTags(tags map[string]string) {
 
 func init() {
 	parsers.Add("prometheusremotewrite",
-		func(defaultMetricName string) telegraf.Parser {
+		func(string) telegraf.Parser {
 			return &Parser{}
 		})
 }

@@ -39,10 +39,13 @@ var tomcatStatus8 = `<?xml version="1.0" encoding="UTF-8"?>
 </status>`
 
 func TestHTTPTomcat8(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := fmt.Fprintln(w, tomcatStatus8); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-		_, err := fmt.Fprintln(w, tomcatStatus8)
-		require.NoError(t, err)
 	}))
 	defer ts.Close()
 
@@ -124,10 +127,13 @@ var tomcatStatus6 = `<?xml version="1.0" encoding="utf-8"?>
 </status>`
 
 func TestHTTPTomcat6(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := fmt.Fprintln(w, tomcatStatus6); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
-		_, err := fmt.Fprintln(w, tomcatStatus6)
-		require.NoError(t, err)
 	}))
 	defer ts.Close()
 

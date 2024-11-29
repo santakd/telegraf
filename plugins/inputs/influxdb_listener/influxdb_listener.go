@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
-	tlsint "github.com/influxdata/telegraf/plugins/common/tls"
+	common_tls "github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/plugins/parsers/influx/influx_upstream"
@@ -35,12 +36,12 @@ const (
 type InfluxDBListener struct {
 	ServiceAddress string `toml:"service_address"`
 	port           int
-	tlsint.ServerConfig
+	common_tls.ServerConfig
 
 	ReadTimeout        config.Duration `toml:"read_timeout"`
 	WriteTimeout       config.Duration `toml:"write_timeout"`
 	MaxBodySize        config.Size     `toml:"max_body_size"`
-	MaxLineSize        config.Size     `toml:"max_line_size" deprecated:"1.14.0;parser now handles lines of unlimited length and option is ignored"`
+	MaxLineSize        config.Size     `toml:"max_line_size" deprecated:"1.14.0;1.35.0;parser now handles lines of unlimited length and option is ignored"`
 	BasicUsername      string          `toml:"basic_username"`
 	BasicPassword      string          `toml:"basic_password"`
 	TokenSharedSecret  string          `toml:"token_shared_secret"`
@@ -77,28 +78,6 @@ func (*InfluxDBListener) SampleConfig() string {
 
 func (h *InfluxDBListener) Gather(_ telegraf.Accumulator) error {
 	return nil
-}
-
-func (h *InfluxDBListener) routes() {
-	var authHandler func(http.Handler) http.Handler
-	if h.TokenSharedSecret != "" {
-		authHandler = internal.JWTAuthHandler(h.TokenSharedSecret, h.TokenUsername,
-			func(_ http.ResponseWriter) {
-				h.authFailures.Incr(1)
-			},
-		)
-	} else {
-		authHandler = internal.BasicAuthHandler(h.BasicUsername, h.BasicPassword, "influxdb",
-			func(_ http.ResponseWriter) {
-				h.authFailures.Incr(1)
-			},
-		)
-	}
-
-	h.mux.Handle("/write", authHandler(h.handleWrite()))
-	h.mux.Handle("/query", authHandler(h.handleQuery()))
-	h.mux.Handle("/ping", h.handlePing())
-	h.mux.Handle("/", authHandler(h.handleDefault()))
 }
 
 func (h *InfluxDBListener) Init() error {
@@ -138,7 +117,6 @@ func (h *InfluxDBListener) Init() error {
 	return nil
 }
 
-// Start starts the InfluxDB listener service.
 func (h *InfluxDBListener) Start(acc telegraf.Accumulator) error {
 	h.acc = acc
 
@@ -182,12 +160,33 @@ func (h *InfluxDBListener) Start(acc telegraf.Accumulator) error {
 	return nil
 }
 
-// Stop cleans up all resources
 func (h *InfluxDBListener) Stop() {
 	err := h.server.Shutdown(context.Background())
 	if err != nil {
 		h.Log.Infof("Error shutting down HTTP server: %v", err.Error())
 	}
+}
+
+func (h *InfluxDBListener) routes() {
+	var authHandler func(http.Handler) http.Handler
+	if h.TokenSharedSecret != "" {
+		authHandler = internal.JWTAuthHandler(h.TokenSharedSecret, h.TokenUsername,
+			func(_ http.ResponseWriter) {
+				h.authFailures.Incr(1)
+			},
+		)
+	} else {
+		authHandler = internal.BasicAuthHandler(h.BasicUsername, h.BasicPassword, "influxdb",
+			func(_ http.ResponseWriter) {
+				h.authFailures.Incr(1)
+			},
+		)
+	}
+
+	h.mux.Handle("/write", authHandler(h.handleWrite()))
+	h.mux.Handle("/query", authHandler(h.handleQuery()))
+	h.mux.Handle("/ping", h.handlePing())
+	h.mux.Handle("/", authHandler(h.handleDefault()))
 }
 
 func (h *InfluxDBListener) ServeHTTP(res http.ResponseWriter, req *http.Request) {
@@ -197,7 +196,7 @@ func (h *InfluxDBListener) ServeHTTP(res http.ResponseWriter, req *http.Request)
 }
 
 func (h *InfluxDBListener) handleQuery() http.HandlerFunc {
-	return func(res http.ResponseWriter, req *http.Request) {
+	return func(res http.ResponseWriter, _ *http.Request) {
 		defer h.queriesServed.Incr(1)
 		// Deliver a dummy response to the query endpoint, as some InfluxDB
 		// clients test endpoint availability with a query
@@ -221,7 +220,10 @@ func (h *InfluxDBListener) handlePing() http.HandlerFunc {
 		if verbose != "" && verbose != "0" && verbose != "false" {
 			res.Header().Set("Content-Type", "application/json")
 			res.WriteHeader(http.StatusOK)
-			b, _ := json.Marshal(map[string]string{"version": "1.0"}) // based on header set above
+			b, err := json.Marshal(map[string]string{"version": "1.0"}) // based on header set above
+			if err != nil {
+				h.Log.Debugf("error marshalling json in handlePing: %v", err)
+			}
 			if _, err := res.Write(b); err != nil {
 				h.Log.Debugf("error writing result in handlePing: %v", err)
 			}
@@ -343,7 +345,7 @@ func (h *InfluxDBListener) handleWriteInternalParser(res http.ResponseWriter, re
 		case 1:
 			partialErrorString = firstParseErrorStr
 		case 2:
-			partialErrorString = fmt.Sprintf("%s (and 1 other parse error)", firstParseErrorStr)
+			partialErrorString = firstParseErrorStr + " (and 1 other parse error)"
 		default:
 			partialErrorString = fmt.Sprintf("%s (and %d other parse errors)", firstParseErrorStr, parseErrorCount-1)
 		}
@@ -446,7 +448,7 @@ func (h *InfluxDBListener) handleWriteUpstreamParser(res http.ResponseWriter, re
 
 		h.acc.AddMetric(m)
 	}
-	if !errors.Is(err, influx_upstream.ErrEOF) {
+	if !errors.Is(err, io.EOF) {
 		h.Log.Debugf("Error parsing the request body: %v", err.Error())
 		if err := badRequest(res, err.Error()); err != nil {
 			h.Log.Debugf("error in bad-request: %v", err)
@@ -459,7 +461,7 @@ func (h *InfluxDBListener) handleWriteUpstreamParser(res http.ResponseWriter, re
 		case 1:
 			partialErrorString = firstParseErrorStr
 		case 2:
-			partialErrorString = fmt.Sprintf("%s (and 1 other parse error)", firstParseErrorStr)
+			partialErrorString = firstParseErrorStr + " (and 1 other parse error)"
 		default:
 			partialErrorString = fmt.Sprintf("%s (and %d other parse errors)", firstParseErrorStr, parseErrorCount-1)
 		}
@@ -490,7 +492,7 @@ func badRequest(res http.ResponseWriter, errString string) error {
 	}
 	res.Header().Set("X-Influxdb-Error", errString)
 	res.WriteHeader(http.StatusBadRequest)
-	_, err := res.Write([]byte(fmt.Sprintf(`{"error":%q}`, errString)))
+	_, err := fmt.Fprintf(res, `{"error":%q}`, errString)
 	return err
 }
 
@@ -499,7 +501,7 @@ func partialWrite(res http.ResponseWriter, errString string) error {
 	res.Header().Set("X-Influxdb-Version", "1.0")
 	res.Header().Set("X-Influxdb-Error", errString)
 	res.WriteHeader(http.StatusBadRequest)
-	_, err := res.Write([]byte(fmt.Sprintf(`{"error":%q}`, errString)))
+	_, err := fmt.Fprintf(res, `{"error":%q}`, errString)
 	return err
 }
 

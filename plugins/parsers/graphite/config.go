@@ -24,10 +24,10 @@ func (c *Config) Validate() error {
 
 func (c *Config) validateTemplates() error {
 	// map to keep track of filters we see
-	filters := map[string]struct{}{}
+	filters := make(map[string]struct{}, len(c.Templates))
 
-	for i, t := range c.Templates {
-		parts := strings.Fields(t)
+	for i, template := range c.Templates {
+		parts := strings.Fields(template)
 		// Ensure template string is non-empty
 		if len(parts) == 0 {
 			return fmt.Errorf("missing template at position: %d", i)
@@ -37,10 +37,9 @@ func (c *Config) validateTemplates() error {
 		}
 
 		if len(parts) > 3 {
-			return fmt.Errorf("invalid template format: %q", t)
+			return fmt.Errorf("invalid template format: %q", template)
 		}
 
-		template := t
 		filter := ""
 		tags := ""
 		if len(parts) >= 2 {

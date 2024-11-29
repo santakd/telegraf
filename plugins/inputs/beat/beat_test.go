@@ -9,13 +9,14 @@ import (
 	"os"
 	"testing"
 
-	"github.com/influxdata/telegraf/testutil"
 	"github.com/stretchr/testify/require"
+
+	"github.com/influxdata/telegraf/testutil"
 )
 
 func Test_BeatStats(t *testing.T) {
 	var beat6StatsAccumulator testutil.Accumulator
-	var beatTest = NewBeat()
+	var beatTest = newBeat()
 	// System stats are disabled by default
 	beatTest.Includes = []string{"beat", "libbeat", "system", "filebeat"}
 	require.NoError(t, beatTest.Init())
@@ -28,13 +29,22 @@ func Test_BeatStats(t *testing.T) {
 		case suffixStats:
 			jsonFilePath = "beat6_stats.json"
 		default:
-			require.FailNow(t, "cannot handle request")
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Cannot handle request")
+			return
 		}
 
 		data, err := os.ReadFile(jsonFilePath)
-		require.NoErrorf(t, err, "could not read from data file %s", jsonFilePath)
-		_, err = w.Write(data)
-		require.NoError(t, err, "could not write data")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Could not read from data file %q: %v", jsonFilePath, err)
+			return
+		}
+		if _, err = w.Write(data); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	requestURL, err := url.Parse(beatTest.URL)
 	require.NoErrorf(t, err, "can't parse URL %s", beatTest.URL)
@@ -44,7 +54,7 @@ func Test_BeatStats(t *testing.T) {
 	fakeServer.Start()
 	defer fakeServer.Close()
 
-	require.NoError(t, err, beatTest.Gather(&beat6StatsAccumulator))
+	require.NoError(t, beatTest.Gather(&beat6StatsAccumulator))
 
 	beat6StatsAccumulator.AssertContainsTaggedFields(
 		t,
@@ -159,7 +169,7 @@ func Test_BeatStats(t *testing.T) {
 
 func Test_BeatRequest(t *testing.T) {
 	var beat6StatsAccumulator testutil.Accumulator
-	beatTest := NewBeat()
+	beatTest := newBeat()
 	// System stats are disabled by default
 	beatTest.Includes = []string{"beat", "libbeat", "system", "filebeat"}
 	require.NoError(t, beatTest.Init())
@@ -172,18 +182,42 @@ func Test_BeatRequest(t *testing.T) {
 		case suffixStats:
 			jsonFilePath = "beat6_stats.json"
 		default:
-			require.FailNow(t, "cannot handle request")
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Cannot handle request")
+			return
 		}
 
 		data, err := os.ReadFile(jsonFilePath)
-		require.NoErrorf(t, err, "could not read from data file %s", jsonFilePath)
-		require.Equal(t, request.Host, "beat.test.local")
-		require.Equal(t, request.Method, "POST")
-		require.Equal(t, request.Header.Get("Authorization"), "Basic YWRtaW46UFdE")
-		require.Equal(t, request.Header.Get("X-Test"), "test-value")
-
-		_, err = w.Write(data)
-		require.NoError(t, err, "could not write data")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Could not read from data file %q: %v", jsonFilePath, err)
+			return
+		}
+		if request.Host != "beat.test.local" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "beat.test.local", request.Host)
+			return
+		}
+		if request.Method != "POST" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "POST", request.Method)
+			return
+		}
+		if request.Header.Get("Authorization") != "Basic YWRtaW46UFdE" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "Basic YWRtaW46UFdE", request.Header.Get("Authorization"))
+			return
+		}
+		if request.Header.Get("X-Test") != "test-value" {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Errorf("Not equal, expected: %q, actual: %q", "test-value", request.Header.Get("X-Test"))
+			return
+		}
+		if _, err = w.Write(data); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 
 	requestURL, err := url.Parse(beatTest.URL)

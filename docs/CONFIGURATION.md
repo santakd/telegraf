@@ -20,7 +20,8 @@ To generate a file with specific inputs and outputs, you can use the
 telegraf config --input-filter cpu:mem:net:swap --output-filter influxdb:kafka
 ```
 
-[View the full list][flags] of Telegraf commands and flags or by running `telegraf --help`.
+[View the full list][flags] of Telegraf commands and flags or by running
+`telegraf --help`.
 
 ### Windows PowerShell v5 Encoding
 
@@ -58,14 +59,24 @@ them with `${}`.  Replacement occurs before file parsing. For strings
 the variable must be within quotes, e.g., `"${STR_VAR}"`, for numbers and booleans
 they should be unquoted, e.g., `${INT_VAR}`, `${BOOL_VAR}`.
 
-In addition to this, Telegraf also supports Shell parameter expansion for environment variables
-which allows syntax such as:
+Users need to keep in mind that when using double quotes the user needs to
+escape any backslashes (e.g. `"C:\\Program Files"`) or other special characters.
+If using an environment variable with a single backslash, then enclose the
+variable in single quotes which signifies a string literal (e.g.
+`'C:\Program Files'`).
 
-- `${VARIABLE:-default}` evaluates to default if VARIABLE is unset or empty in the environment.
-- `${VARIABLE-default}` evaluates to default only if VARIABLE is unset in the environment.
-Similarly, the following syntax allows you to specify mandatory variables:
-- `${VARIABLE:?err}` exits with an error message containing err if VARIABLE is unset or empty in the environment.
-- `${VARIABLE?err}` exits with an error message containing err if VARIABLE is unset in the environment.
+In addition to this, Telegraf also supports Shell parameter expansion for
+environment variables which allows syntax such as:
+
+- `${VARIABLE:-default}` evaluates to default if VARIABLE is unset or empty in
+                         the environment.
+- `${VARIABLE-default}` evaluates to default only if VARIABLE is unset in the
+                        environment. Similarly, the following syntax allows you
+                        to specify mandatory variables:
+- `${VARIABLE:?err}` exits with an error message containing err if VARIABLE is
+                     unset or empty in the environment.
+- `${VARIABLE?err}` exits with an error message containing err if VARIABLE is
+                     unset in the environment.
 
 When using the `.deb` or `.rpm` packages, you can define environment variables
 in the `/etc/default/telegraf` file.
@@ -231,7 +242,7 @@ combining an integer value and time unit as a string value.  Valid time units ar
 
 Global tags can be specified in the `[global_tags]` table in key="value"
 format. All metrics that are gathered will be tagged with the tags specified.
-Global tags are overriden by tags set by plugins.
+Global tags are overridden by tags set by plugins.
 
 ```toml
 [global_tags]
@@ -255,7 +266,8 @@ The agent table configures Telegraf and the defaults used across all plugins.
 - **metric_buffer_limit**:
   Maximum number of unwritten metrics per output.  Increasing this value
   allows for longer periods of output downtime without dropping metrics at the
-  cost of higher maximum memory usage.
+  cost of higher maximum memory usage. Oldest metrics are overwritten in favor
+  of new ones when the buffer fills up.
 
 - **collection_jitter**:
   Collection jitter is used to jitter the collection by a random [interval][].
@@ -290,14 +302,14 @@ The agent table configures Telegraf and the defaults used across all plugins.
 - **quiet**:
   Log only error level messages.
 
-- **logtarget**:
-  Log target controls the destination for logs and can be one of "file",
-  "stderr" or, on Windows, "eventlog".  When set to "file", the output file is
-  determined by the "logfile" setting.
+- **logformat**:
+  Log format controls the way messages are logged and can be one of "text",
+  "structured" or, on Windows, "eventlog". The output file (if any) is
+  determined by the `logfile` setting.
 
 - **logfile**:
-  Name of the file to be logged to when using the "file" logtarget.  If set to
-  the empty string then logs are written to stderr.
+  Name of the file to be logged to or stderr if unset or empty. This
+  setting is ignored for the "eventlog" format.
 
 - **logfile_rotation_interval**:
   The logfile will be rotated after the time interval specified.  When set to
@@ -342,6 +354,21 @@ The agent table configures Telegraf and the defaults used across all plugins.
   tag-filtering   via `taginclude` or `tagexclude`. This removes the need to
   specify those tags twice.
 
+- **skip_processors_after_aggregators**:
+  By default, processors are run a second time after aggregators. Changing
+  this setting to true will skip the second run of processors.
+
+- **buffer_strategy**:
+  The type of buffer to use for telegraf output plugins. Supported modes are
+  `memory`, the default and original buffer type, and `disk`, an experimental
+  disk-backed buffer which will serialize all metrics to disk as needed to
+  improve data durability and reduce the chance for data loss. This is only
+  supported at the agent level.
+
+- **buffer_directory**:
+  The directory to use when in `disk` buffer mode. Each output plugin will make
+  another subdirectory in this directory with the output plugin's ID.
+
 ## Plugins
 
 Telegraf plugins are divided into 4 types: [inputs][], [outputs][],
@@ -364,38 +391,40 @@ driven operation.
 Parameters that can be used with any input plugin:
 
 - **alias**: Name an instance of a plugin.
-
 - **interval**:
   Overrides the `interval` setting of the [agent][Agent] for the plugin.  How
   often to gather this metric. Normal plugins use a single global interval, but
   if one particular input should be run less or more often, you can configure
   that here.
-
 - **precision**:
   Overrides the `precision` setting of the [agent][Agent] for the plugin.
   Collected metrics are rounded to the precision specified as an [interval][].
 
-  When this value is set on a service input, multiple events occuring at the
+  When this value is set on a service input, multiple events occurring at the
   same timestamp may be merged by the output database.
+- **time_source**:
+  Specifies the source of the timestamp on metrics. Possible values are:
+  - `metric` will not alter the metric (default)
+  - `collection_start` sets the timestamp to when collection started
+  - `collection_end` set the timestamp to when collection finished
 
+  `time_source` will NOT be used for service inputs. It is up to each individual
+  service input to set the timestamp.
 - **collection_jitter**:
   Overrides the `collection_jitter` setting of the [agent][Agent] for the
   plugin.  Collection jitter is used to jitter the collection by a random
-  [interval][].
-
+  [interval][]. The value must be non-zero to override the agent setting.
 - **collection_offset**:
   Overrides the `collection_offset` setting of the [agent][Agent] for the
   plugin. Collection offset is used to shift the collection by the given
-  [interval][].
-
+  [interval][]. The value must be non-zero to override the agent setting.
 - **name_override**: Override the base name of the measurement.  (Default is
   the name of the input).
-
 - **name_prefix**: Specifies a prefix to attach to the measurement name.
-
 - **name_suffix**: Specifies a suffix to attach to the measurement name.
-
 - **tags**: A map of tags to apply to a specific input's measurements.
+- **log_level**: Override the log-level for this plugin. Possible values are
+  `error`, `warn`, `info`, `debug` and `trace`.
 
 The [metric filtering][] parameters can be used to limit what metrics are
 emitted from the input plugin.
@@ -457,7 +486,7 @@ avoid measurement collisions when defining multiple plugins:
   percpu = true
   totalcpu = false
   name_override = "percpu_usage"
-  fielddrop = ["cpu_time*"]
+  fieldexclude = ["cpu_time*"]
 ```
 
 ### Output Plugins
@@ -471,7 +500,8 @@ Parameters that can be used with any output plugin:
 - **flush_interval**: The maximum time between flushes.  Use this setting to
   override the agent `flush_interval` on a per plugin basis.
 - **flush_jitter**: The amount of time to jitter the flush interval.  Use this
-  setting to override the agent `flush_jitter` on a per plugin basis.
+  setting to override the agent `flush_jitter` on a per plugin basis. The value
+  must be non-zero to override the agent setting.
 - **metric_batch_size**: The maximum number of metrics to send at once.  Use
   this setting to override the agent `metric_batch_size` on a per plugin basis.
 - **metric_buffer_limit**: The maximum number of unsent metrics to buffer.
@@ -480,6 +510,8 @@ Parameters that can be used with any output plugin:
 - **name_override**: Override the original name of the measurement.
 - **name_prefix**: Specifies a prefix to attach to the measurement name.
 - **name_suffix**: Specifies a suffix to attach to the measurement name.
+- **log_level**: Override the log-level for this plugin. Possible values are
+  `error`, `warn`, `info` and `debug`.
 
 The [metric filtering][] parameters can be used to limit what metrics are
 emitted from the output plugin.
@@ -518,6 +550,8 @@ Parameters that can be used with any processor plugin:
   If this is not specified then processor execution order will be the order in
   the config. Processors without "order" will take precedence over those
   with a defined order.
+- **log_level**: Override the log-level for this plugin. Possible values are
+  `error`, `warn`, `info` and `debug`.
 
 The [metric filtering][] parameters can be used to limit what metrics are
 handled by the processor.  Excluded metrics are passed downstream to the next
@@ -570,6 +604,8 @@ Parameters that can be used with any aggregator plugin:
 - **name_prefix**: Specifies a prefix to attach to the measurement name.
 - **name_suffix**: Specifies a suffix to attach to the measurement name.
 - **tags**: A map of tags to apply to the measurement - behavior varies based on aggregator.
+- **log_level**: Override the log-level for this plugin. Possible values are
+  `error`, `warn`, `info` and `debug`.
 
 The [metric filtering][] parameters can be used to limit what metrics are
 handled by the aggregator.  Excluded metrics are passed downstream to the next
@@ -582,7 +618,7 @@ the originals.
 
 ```toml
 [[inputs.system]]
-  fieldpass = ["load1"] # collects system load1 metric.
+  fieldinclude = ["load1"] # collects system load1 metric.
 
 [[aggregators.minmax]]
   period = "30s"        # send & clear the aggregate every 30s.
@@ -600,7 +636,7 @@ to the `namepass` parameter.
 [[inputs.swap]]
 
 [[inputs.system]]
-  fieldpass = ["load1"] # collects system load1 metric.
+  fieldinclude = ["load1"] # collects system load1 metric.
 
 [[aggregators.minmax]]
   period = "30s"        # send & clear the aggregate every 30s.
@@ -626,11 +662,15 @@ sent onwards to the next stage of processing.
 
 - **namepass**:
 An array of [glob pattern][] strings. Only metrics whose measurement name
-matches a pattern in this list are emitted.
+matches a pattern in this list are emitted. Additionally, custom list of
+separators can be specified using `namepass_separator`. These separators
+are excluded from wildcard glob pattern matching.
 
 - **namedrop**:
 The inverse of `namepass`. If a match is found the metric is discarded. This
-is tested on metrics after they have passed the `namepass` test.
+is tested on metrics after they have passed the `namepass` test. Additionally,
+custom list of separators can be specified using `namedrop_separator`. These
+separators are excluded from wildcard glob pattern matching.
 
 - **tagpass**:
 A table mapping tag keys to arrays of [glob pattern][] strings.  Only metrics
@@ -679,19 +719,20 @@ the evaluation is aborted, an error is logged, and the expression is reported as
 
 ### Modifiers
 
-Modifier filters remove tags and fields from a metric.  If all fields are
-removed the metric is removed. Tags and fields are modified before a metric is
+Modifier filters remove tags and fields from a metric. If all fields are
+removed the metric is removed and as result not passed through to the following
+processors or any output plugin. Tags and fields are modified before a metric is
 passed to a processor, aggregator, or output plugin. When used with an input
 plugin the filter applies after the input runs.
 
-- **fieldpass**:
+- **fieldinclude**:
 An array of [glob pattern][] strings.  Only fields whose field key matches a
 pattern in this list are emitted.
 
-- **fielddrop**:
-The inverse of `fieldpass`.  Fields with a field key matching one of the
+- **fieldexclude**:
+The inverse of `fieldinclude`.  Fields with a field key matching one of the
 patterns will be discarded from the metric.  This is tested on metrics after
-they have passed the `fieldpass` test.
+they have passed the `fieldinclude` test.
 
 - **taginclude**:
 An array of [glob pattern][] strings.  Only tags with a tag key matching one of
@@ -713,7 +754,7 @@ tags and the agent `host` tag.
 [[inputs.cpu]]
   percpu = true
   totalcpu = false
-  fielddrop = ["cpu_time"]
+  fieldexclude = ["cpu_time"]
   # Don't collect CPU data for cpu6 & cpu7
   [inputs.cpu.tagdrop]
     cpu = [ "cpu6", "cpu7" ]
@@ -742,18 +783,18 @@ tags and the agent `host` tag.
     instance = ["isatap*", "Local*"]
 ```
 
-#### Using fieldpass and fielddrop
+#### Using fieldinclude and fieldexclude
 
 ```toml
 # Drop all metrics for guest & steal CPU usage
 [[inputs.cpu]]
   percpu = false
   totalcpu = true
-  fielddrop = ["usage_guest", "usage_steal"]
+  fieldexclude = ["usage_guest", "usage_steal"]
 
 # Only store inode related metrics for disks
 [[inputs.disk]]
-  fieldpass = ["inodes*"]
+  fieldinclude = ["inodes*"]
 ```
 
 #### Using namepass and namedrop
@@ -768,6 +809,26 @@ tags and the agent `host` tag.
 [[inputs.prometheus]]
   urls = ["http://kube-node-1:4194/metrics"]
   namepass = ["rest_client_*"]
+```
+
+#### Using namepass and namedrop with separators
+
+```toml
+# Pass all metrics of type 'A.C.B' and drop all others like 'A.C.D.B'
+[[inputs.socket_listener]]
+  data_format = "graphite"
+  templates = ["measurement*"]
+
+  namepass = ["A.*.B"]
+  namepass_separator = "."
+
+# Drop all metrics of type 'A.C.B' and pass all others like 'A.C.D.B'
+[[inputs.socket_listener]]
+  data_format = "graphite"
+  templates = ["measurement*"]
+
+  namedrop = ["A.*.B"]
+  namedrop_separator = "."
 ```
 
 #### Using taginclude and tagexclude
@@ -810,7 +871,7 @@ tags and the agent `host` tag.
 #### Routing metrics to different outputs based on the input
 
 Metrics are tagged with `influxdb_database` in the input, which is then used to
-select the output.  The tag is removed in the outputs before writing.
+select the output.  The tag is removed in the outputs before writing with `tagexclude`.
 
 ```toml
 [[outputs.influxdb]]

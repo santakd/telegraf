@@ -8,12 +8,16 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
+	"github.com/docker/go-connections/nat"
 	"github.com/influxdata/toml"
 	"github.com/influxdata/toml/ast"
 	"github.com/stretchr/testify/require"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/metric"
 	common "github.com/influxdata/telegraf/plugins/common/jolokia2"
 	"github.com/influxdata/telegraf/plugins/inputs/jolokia2_agent"
 	"github.com/influxdata/telegraf/testutil"
@@ -82,7 +86,7 @@ func TestScalarValues(t *testing.T) {
 
 	server := setupServer(response)
 	defer server.Close()
-	plugin := SetupPlugin(t, fmt.Sprintf(config, server.URL))
+	plugin := setupPlugin(t, fmt.Sprintf(config, server.URL))
 
 	var acc testutil.Accumulator
 	require.NoError(t, plugin.Gather(&acc))
@@ -161,7 +165,7 @@ func TestObjectValues(t *testing.T) {
 
 	server := setupServer(string(response))
 	defer server.Close()
-	plugin := SetupPlugin(t, fmt.Sprintf(config, server.URL))
+	plugin := setupPlugin(t, fmt.Sprintf(config, server.URL))
 
 	var acc testutil.Accumulator
 	require.NoError(t, plugin.Gather(&acc))
@@ -249,7 +253,7 @@ func TestStatusCodes(t *testing.T) {
 
 	server := setupServer(response)
 	defer server.Close()
-	plugin := SetupPlugin(t, fmt.Sprintf(config, server.URL))
+	plugin := setupPlugin(t, fmt.Sprintf(config, server.URL))
 
 	var acc testutil.Accumulator
 	require.NoError(t, plugin.Gather(&acc))
@@ -299,7 +303,7 @@ func TestTagRenaming(t *testing.T) {
 
 	server := setupServer(response)
 	defer server.Close()
-	plugin := SetupPlugin(t, fmt.Sprintf(config, server.URL))
+	plugin := setupPlugin(t, fmt.Sprintf(config, server.URL))
 
 	var acc testutil.Accumulator
 	require.NoError(t, plugin.Gather(&acc))
@@ -392,7 +396,7 @@ func TestFieldRenaming(t *testing.T) {
 
 	server := setupServer(response)
 	defer server.Close()
-	plugin := SetupPlugin(t, fmt.Sprintf(config, server.URL))
+	plugin := setupPlugin(t, fmt.Sprintf(config, server.URL))
 
 	var acc testutil.Accumulator
 	require.NoError(t, plugin.Gather(&acc))
@@ -500,7 +504,7 @@ func TestMetricMbeanMatching(t *testing.T) {
 
 	server := setupServer(response)
 	defer server.Close()
-	plugin := SetupPlugin(t, fmt.Sprintf(config, server.URL))
+	plugin := setupPlugin(t, fmt.Sprintf(config, server.URL))
 
 	var acc testutil.Accumulator
 	require.NoError(t, plugin.Gather(&acc))
@@ -593,7 +597,7 @@ func TestMetricCompaction(t *testing.T) {
 
 	server := setupServer(response)
 	defer server.Close()
-	plugin := SetupPlugin(t, fmt.Sprintf(config, server.URL))
+	plugin := setupPlugin(t, fmt.Sprintf(config, server.URL))
 
 	var acc testutil.Accumulator
 	require.NoError(t, plugin.Gather(&acc))
@@ -623,14 +627,23 @@ func TestJolokia2_ClientAuthRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		username, password, _ = r.BasicAuth()
 
-		body, _ := io.ReadAll(r.Body)
-		require.NoError(t, json.Unmarshal(body, &requests))
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
+		if err := json.Unmarshal(body, &requests); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	plugin := SetupPlugin(t, fmt.Sprintf(`
+	plugin := setupPlugin(t, fmt.Sprintf(`
 		[jolokia2_agent]
 			urls = ["%s/jolokia"]
 			username = "sally"
@@ -645,7 +658,7 @@ func TestJolokia2_ClientAuthRequest(t *testing.T) {
 
 	require.EqualValuesf(t, "sally", username, "Expected to post with username %s, but was %s", "sally", username)
 	require.EqualValuesf(t, "seashore", password, "Expected to post with password %s, but was %s", "seashore", password)
-	require.NotZero(t, len(requests), "Expected to post a request body, but was empty.")
+	require.NotEmpty(t, requests, "Expected to post a request body, but was empty.")
 
 	request := requests[0]["mbean"]
 	require.EqualValuesf(t, "hello:foo=bar", request, "Expected to query mbean %s, but was %s", "hello:foo=bar", request)
@@ -670,14 +683,228 @@ func TestFillFields(t *testing.T) {
 	require.Equal(t, map[string]interface{}{}, results)
 }
 
+func TestIntegrationArtemis(t *testing.T) {
+	if testing.Short() {
+		t.Skip("Skipping integration test in short mode")
+	}
+
+	// Start the docker container
+	container := testutil.Container{
+		Image:        "apache/activemq-artemis",
+		ExposedPorts: []string{"61616", "8161"},
+		WaitingFor: wait.ForAll(
+			wait.ForLog("Artemis Console available at"),
+			wait.ForListeningPort(nat.Port("8161")),
+		),
+	}
+	require.NoError(t, container.Start(), "failed to start container")
+	defer container.Terminate()
+
+	// Setup the plugin
+	port := container.Ports["8161"]
+	endpoint := "http://" + container.Address + ":" + port + "/console/jolokia/"
+	plugin := &jolokia2_agent.JolokiaAgent{
+		URLs:     []string{endpoint},
+		Username: "artemis",
+		Password: "artemis",
+		Metrics: []common.MetricConfig{
+			{
+				Name:    "artemis",
+				Mbean:   `org.apache.activemq.artemis:broker="*",component=addresses,address="*",subcomponent=queues,routing-type="anycast",queue="*"`,
+				TagKeys: []string{"queue", "subcomponent"},
+			},
+		},
+	}
+
+	// Setup the expectations
+	expected := []telegraf.Metric{
+		metric.New(
+			"artemis",
+			map[string]string{
+				"jolokia_agent_url": endpoint,
+				"queue":             "$sys.mqtt.sessions",
+				"subcomponent":      "queues",
+			},
+			map[string]interface{}{
+				"AcknowledgeAttempts":             float64(0),
+				"Address":                         "ExpiryQueue",
+				"AutoDelete":                      false,
+				"ConfigurationManaged":            false,
+				"ConsumerCount":                   float64(0),
+				"ConsumersBeforeDispatch":         float64(0),
+				"DeadLetterAddress":               "DLQ",
+				"DelayBeforeDispatch":             float64(0),
+				"DeliveringCount":                 float64(0),
+				"DeliveringSize":                  float64(0),
+				"Durable":                         false,
+				"DurableDeliveringCount":          float64(0),
+				"DurableDeliveringSize":           float64(0),
+				"DurableMessageCount":             float64(0),
+				"DurablePersistentSize":           float64(0),
+				"DurableScheduledCount":           float64(0),
+				"DurableScheduledSize":            float64(0),
+				"Enabled":                         true,
+				"Exclusive":                       true,
+				"ExpiryAddress":                   "ExpiryQueue",
+				"FirstMessageAsJSON":              "[{}]",
+				"GroupBuckets":                    float64(0),
+				"GroupCount":                      float64(0),
+				"GroupRebalance":                  false,
+				"GroupRebalancePauseDispatch":     false,
+				"ID":                              float64(0),
+				"InternalQueue":                   false,
+				"LastValue":                       false,
+				"LastValueKey":                    "",
+				"MaxConsumers":                    float64(0),
+				"MessageCount":                    float64(0),
+				"MessagesAcknowledged":            float64(0),
+				"MessagesAdded":                   float64(0),
+				"MessagesExpired":                 float64(0),
+				"MessagesKilled":                  float64(0),
+				"Name":                            "ExpiryQueue",
+				"Paused":                          false,
+				"PersistentSize":                  float64(0),
+				"PreparedTransactionMessageCount": float64(0),
+				"PurgeOnNoConsumers":              false,
+				"RetroactiveResource":             false,
+				"RingSize":                        float64(0),
+				"RoutingType":                     "ANYCAST",
+				"ScheduledCount":                  float64(0),
+				"ScheduledSize":                   float64(0),
+				"Temporary":                       false,
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"artemis",
+			map[string]string{
+				"jolokia_agent_url": endpoint,
+				"queue":             "ExpiryQueue",
+				"subcomponent":      "queues",
+			},
+			map[string]interface{}{
+				"AcknowledgeAttempts":             float64(0),
+				"Address":                         "ExpiryQueue",
+				"AutoDelete":                      false,
+				"ConfigurationManaged":            false,
+				"ConsumerCount":                   float64(0),
+				"ConsumersBeforeDispatch":         float64(0),
+				"DeadLetterAddress":               "DLQ",
+				"DelayBeforeDispatch":             float64(0),
+				"DeliveringCount":                 float64(0),
+				"DeliveringSize":                  float64(0),
+				"Durable":                         false,
+				"DurableDeliveringCount":          float64(0),
+				"DurableDeliveringSize":           float64(0),
+				"DurableMessageCount":             float64(0),
+				"DurablePersistentSize":           float64(0),
+				"DurableScheduledCount":           float64(0),
+				"DurableScheduledSize":            float64(0),
+				"Enabled":                         true,
+				"Exclusive":                       true,
+				"ExpiryAddress":                   "ExpiryQueue",
+				"FirstMessageAsJSON":              "[{}]",
+				"GroupBuckets":                    float64(0),
+				"GroupCount":                      float64(0),
+				"GroupRebalance":                  false,
+				"GroupRebalancePauseDispatch":     false,
+				"ID":                              float64(0),
+				"InternalQueue":                   false,
+				"LastValue":                       false,
+				"MaxConsumers":                    float64(0),
+				"MessageCount":                    float64(0),
+				"MessagesAcknowledged":            float64(0),
+				"MessagesAdded":                   float64(0),
+				"MessagesExpired":                 float64(0),
+				"MessagesKilled":                  float64(0),
+				"Name":                            "ExpiryQueue",
+				"Paused":                          false,
+				"PersistentSize":                  float64(0),
+				"PreparedTransactionMessageCount": float64(0),
+				"PurgeOnNoConsumers":              false,
+				"RetroactiveResource":             false,
+				"RingSize":                        float64(0),
+				"RoutingType":                     "ANYCAST",
+				"ScheduledCount":                  float64(0),
+				"ScheduledSize":                   float64(0),
+				"Temporary":                       false,
+			},
+			time.Unix(0, 0),
+		),
+		metric.New(
+			"artemis",
+			map[string]string{
+				"jolokia_agent_url": endpoint,
+				"queue":             "DLQ",
+				"subcomponent":      "queues",
+			},
+			map[string]interface{}{
+				"AcknowledgeAttempts":             float64(0),
+				"Address":                         "DLQ",
+				"AutoDelete":                      false,
+				"ConfigurationManaged":            false,
+				"ConsumerCount":                   float64(0),
+				"ConsumersBeforeDispatch":         float64(0),
+				"DeadLetterAddress":               "DLQ",
+				"DelayBeforeDispatch":             float64(0),
+				"DeliveringCount":                 float64(0),
+				"DeliveringSize":                  float64(0),
+				"Durable":                         false,
+				"DurableDeliveringCount":          float64(0),
+				"DurableDeliveringSize":           float64(0),
+				"DurableMessageCount":             float64(0),
+				"DurablePersistentSize":           float64(0),
+				"DurableScheduledCount":           float64(0),
+				"DurableScheduledSize":            float64(0),
+				"Enabled":                         true,
+				"Exclusive":                       true,
+				"ExpiryAddress":                   "ExpiryQueue",
+				"FirstMessageAsJSON":              "[{}]",
+				"GroupBuckets":                    float64(0),
+				"GroupCount":                      float64(0),
+				"GroupRebalance":                  false,
+				"GroupRebalancePauseDispatch":     false,
+				"ID":                              float64(0),
+				"InternalQueue":                   false,
+				"LastValue":                       false,
+				"MaxConsumers":                    float64(0),
+				"MessageCount":                    float64(0),
+				"MessagesAcknowledged":            float64(0),
+				"MessagesAdded":                   float64(0),
+				"MessagesExpired":                 float64(0),
+				"MessagesKilled":                  float64(0),
+				"Name":                            "DLQ",
+				"Paused":                          false,
+				"PersistentSize":                  float64(0),
+				"PreparedTransactionMessageCount": float64(0),
+				"PurgeOnNoConsumers":              false,
+				"RetroactiveResource":             false,
+				"RingSize":                        float64(0),
+				"RoutingType":                     "ANYCAST",
+				"ScheduledCount":                  float64(0),
+				"ScheduledSize":                   float64(0),
+				"Temporary":                       false,
+			},
+			time.Unix(0, 0),
+		),
+	}
+
+	// Collect the metrics and compare
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Gather(&acc))
+
+	actual := acc.GetTelegrafMetrics()
+	testutil.RequireMetricsStructureEqual(t, expected, actual, testutil.SortMetrics(), testutil.IgnoreTime())
+}
+
 func setupServer(resp string) *httptest.Server {
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintln(w, resp)
 	}))
 }
 
-func SetupPlugin(t *testing.T, conf string) telegraf.Input {
+func setupPlugin(t *testing.T, conf string) telegraf.Input {
 	table, err := toml.Parse([]byte(conf))
 	if err != nil {
 		t.Fatalf("Unable to parse config! %v", err)
@@ -687,7 +914,6 @@ func SetupPlugin(t *testing.T, conf string) telegraf.Input {
 		object := table.Fields[name]
 		if name == "jolokia2_agent" {
 			plugin := jolokia2_agent.JolokiaAgent{
-				Metrics:               []common.MetricConfig{},
 				DefaultFieldSeparator: ".",
 			}
 

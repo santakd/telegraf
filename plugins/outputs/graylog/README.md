@@ -1,8 +1,14 @@
 # Graylog Output Plugin
 
-This plugin writes to a Graylog instance using the "[GELF][]" format.
+This plugin writes metrics to a [Graylog][graylog] instance using the
+[GELF data format][gelf].
 
-[GELF]: https://docs.graylog.org/en/3.1/pages/gelf.html#gelf-payload-specification
+⭐ Telegraf v1.0.0
+🏷️ datatstore, logging
+💻 all
+
+[gelf]: https://docs.graylog.org/en/3.1/pages/gelf.html#gelf-payload-specification
+[graylog]: https://graylog.org/
 
 ## GELF Fields
 
@@ -52,7 +58,7 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   # name_field_no_prefix = false
 
   ## Connection retry options
-  ## Attempt to connect to the enpoints if the initial connection fails.
+  ## Attempt to connect to the endpoints if the initial connection fails.
   ## If 'false', Telegraf will give up after 3 connection attempt and will
   ## exit with an error. If set to 'true', the plugin will retry to connect
   ## to the unconnected endpoints infinitely.

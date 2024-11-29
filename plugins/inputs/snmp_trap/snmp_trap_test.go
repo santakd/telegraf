@@ -1,7 +1,7 @@
 package snmp_trap
 
 import (
-	"fmt"
+	"errors"
 	"net"
 	"strconv"
 	"strings"
@@ -32,7 +32,7 @@ func (t *testTranslator) lookup(input string) (snmp.MibEntry, error) {
 			return snmp.MibEntry{MibName: entry.e.MibName, OidText: entry.e.OidText}, nil
 		}
 	}
-	return snmp.MibEntry{}, fmt.Errorf("unexpected oid")
+	return snmp.MibEntry{}, errors.New("unexpected oid")
 }
 
 func newTestTranslator(entries []entry) *testTranslator {
@@ -54,21 +54,21 @@ func newMsgFlagsV3(secLevel string) gosnmp.SnmpV3MsgFlags {
 	return msgFlags
 }
 
-func newUsmSecurityParametersForV3(authProto string, privProto string, username string, privPass string, authPass string) *gosnmp.UsmSecurityParameters {
+func newUsmSecurityParametersForV3(authProto, privProto, username, privPass, authPass string) *gosnmp.UsmSecurityParameters {
 	var authenticationProtocol gosnmp.SnmpV3AuthProtocol
 	switch strings.ToLower(authProto) {
 	case "md5":
 		authenticationProtocol = gosnmp.MD5
 	case "sha":
 		authenticationProtocol = gosnmp.SHA
-	//case "sha224":
-	//	authenticationProtocol = gosnmp.SHA224
-	//case "sha256":
-	//	authenticationProtocol = gosnmp.SHA256
-	//case "sha384":
-	//	authenticationProtocol = gosnmp.SHA384
-	//case "sha512":
-	//	authenticationProtocol = gosnmp.SHA512
+	case "sha224":
+		authenticationProtocol = gosnmp.SHA224
+	case "sha256":
+		authenticationProtocol = gosnmp.SHA256
+	case "sha384":
+		authenticationProtocol = gosnmp.SHA384
+	case "sha512":
+		authenticationProtocol = gosnmp.SHA512
 	case "":
 		authenticationProtocol = gosnmp.NoAuth
 	default:
@@ -107,7 +107,7 @@ func newUsmSecurityParametersForV3(authProto string, privProto string, username 
 	}
 }
 
-func newGoSNMPV3(port uint16, contextName string, engineID string, msgFlags gosnmp.SnmpV3MsgFlags, sp *gosnmp.UsmSecurityParameters) gosnmp.GoSNMP {
+func newGoSNMPV3(port uint16, contextName, engineID string, msgFlags gosnmp.SnmpV3MsgFlags, sp *gosnmp.UsmSecurityParameters) gosnmp.GoSNMP {
 	return gosnmp.GoSNMP{
 		Port:               port,
 		Version:            gosnmp.Version3,
@@ -171,7 +171,7 @@ func TestReceiveTrap(t *testing.T) {
 		entries []entry
 		metrics []telegraf.Metric
 	}{
-		//ordinary v2c coldStart trap
+		// ordinary v2c coldStart trap
 		{
 			name:    "v2c coldStart",
 			version: gosnmp.Version2c,
@@ -230,10 +230,10 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//Check that we're not running snmptranslate to look up oids
-		//when we shouldn't be.  This sends and receives a valid trap
-		//but metric production should fail because the oids aren't in
-		//the cache and oid lookup is intentionally mocked to fail.
+		// Check that we're not running snmptranslate to look up oids
+		// when we shouldn't be.  This sends and receives a valid trap
+		// but metric production should fail because the oids aren't in
+		// the cache and oid lookup is intentionally mocked to fail.
 		{
 			name:    "missing oid",
 			version: gosnmp.Version2c,
@@ -251,10 +251,8 @@ func TestReceiveTrap(t *testing.T) {
 					},
 				},
 			},
-			entries: []entry{}, //nothing in cache
-			metrics: []telegraf.Metric{},
 		},
-		//v1 enterprise specific trap
+		// v1 enterprise specific trap
 		{
 			name:    "v1 trap enterprise",
 			version: gosnmp.Version1,
@@ -308,7 +306,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//v1 generic trap
+		// v1 generic trap
 		{
 			name:    "v1 trap generic",
 			version: gosnmp.Version1,
@@ -319,10 +317,15 @@ func TestReceiveTrap(t *testing.T) {
 						Type:  gosnmp.OctetString,
 						Value: "payload",
 					},
+					{
+						Name:  ".1.2.3.4.6",
+						Type:  gosnmp.OctetString,
+						Value: []byte{0x7, 0xe8, 0x1, 0x4, 0xe, 0x2, 0x19, 0x0, 0x0, 0xe, 0x2},
+					},
 				},
 				Enterprise:   ".1.2.3",
 				AgentAddress: "10.20.30.40",
-				GenericTrap:  0, //coldStart
+				GenericTrap:  0, // coldStart
 				SpecificTrap: 0,
 				Timestamp:    uint(now),
 			},
@@ -332,6 +335,13 @@ func TestReceiveTrap(t *testing.T) {
 					snmp.MibEntry{
 						MibName: "valueMIB",
 						OidText: "valueOID",
+					},
+				},
+				{
+					".1.2.3.4.6",
+					snmp.MibEntry{
+						MibName: "valueMIB",
+						OidText: "valueHexOID",
 					},
 				},
 				{
@@ -357,12 +367,13 @@ func TestReceiveTrap(t *testing.T) {
 					map[string]interface{}{ // fields
 						"sysUpTimeInstance": uint(now),
 						"valueOID":          "payload",
+						"valueHexOID":       "07e801040e021900000e02",
 					},
 					fakeTime,
 				),
 			},
 		},
-		//ordinary v3 coldStart trap no auth and no priv
+		// ordinary v3 coldStart trap no auth and no priv
 		{
 			name:        "v3 coldStart noAuthNoPriv",
 			version:     gosnmp.Version3,
@@ -426,7 +437,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldstart trap SHA auth and no priv
+		// ordinary v3 coldstart trap SHA auth and no priv
 		{
 			name:      "v3 coldStart authShaNoPriv",
 			version:   gosnmp.Version3,
@@ -488,256 +499,255 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		/*
-			//ordinary v3 coldstart trap SHA224 auth and no priv
-			{
-				name:      "v3 coldStart authShaNoPriv",
-				version:   gosnmp.Version3,
-				secName:   "authSha224NoPriv",
-				secLevel:  "authNoPriv",
-				authProto: "SHA224",
-				authPass:  "passpass",
-				trap: gosnmp.SnmpTrap{
-					Variables: []gosnmp.SnmpPDU{
-						{
-							Name:  ".1.3.6.1.2.1.1.3.0",
-							Type:  gosnmp.TimeTicks,
-							Value: now,
-						},
-						{
-							Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
-							Type:  gosnmp.ObjectIdentifier,
-							Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
-						},
-					},
-				},
-				entries: []entry{
+		// ordinary v3 coldstart trap SHA224 auth and no priv
+		{
+			name:      "v3 coldStart authShaNoPriv",
+			version:   gosnmp.Version3,
+			secName:   "authSha224NoPriv",
+			secLevel:  "authNoPriv",
+			authProto: "SHA224",
+			authPass:  "passpass",
+			trap: gosnmp.SnmpTrap{
+				Variables: []gosnmp.SnmpPDU{
 					{
-						oid: ".1.3.6.1.6.3.1.1.4.1.0",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "snmpTrapOID.0",
-						},
+						Name:  ".1.3.6.1.2.1.1.3.0",
+						Type:  gosnmp.TimeTicks,
+						Value: now,
 					},
 					{
-						oid: ".1.3.6.1.6.3.1.1.5.1",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "coldStart",
-						},
+						Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
+						Type:  gosnmp.ObjectIdentifier,
+						Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
 					},
-					{
-						oid: ".1.3.6.1.2.1.1.3.0",
-						e: snmp.MibEntry{
-							MibName: "UNUSED_MIB_NAME",
-							OidText: "sysUpTimeInstance",
-						},
-					},
-				},
-				metrics: []telegraf.Metric{
-					testutil.MustMetric(
-						"snmp_trap", // name
-						map[string]string{ // tags
-							"oid":     ".1.3.6.1.6.3.1.1.5.1",
-							"name":    "coldStart",
-							"mib":     "SNMPv2-MIB",
-							"version": "3",
-							"source":  "127.0.0.1",
-						},
-						map[string]interface{}{ // fields
-							"sysUpTimeInstance": now,
-						},
-						fakeTime,
-					),
 				},
 			},
-			//ordinary v3 coldstart trap SHA256 auth and no priv
-			{
-				name:      "v3 coldStart authSha256NoPriv",
-				version:   gosnmp.Version3,
-				secName:   "authSha256NoPriv",
-				secLevel:  "authNoPriv",
-				authProto: "SHA256",
-				authPass:  "passpass",
-				trap: gosnmp.SnmpTrap{
-					Variables: []gosnmp.SnmpPDU{
-						{
-							Name:  ".1.3.6.1.2.1.1.3.0",
-							Type:  gosnmp.TimeTicks,
-							Value: now,
-						},
-						{
-							Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
-							Type:  gosnmp.ObjectIdentifier,
-							Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
-						},
+			entries: []entry{
+				{
+					oid: ".1.3.6.1.6.3.1.1.4.1.0",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "snmpTrapOID.0",
 					},
 				},
-				entries: []entry{
-					{
-						oid: ".1.3.6.1.6.3.1.1.4.1.0",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "snmpTrapOID.0",
-						},
-					},
-					{
-						oid: ".1.3.6.1.6.3.1.1.5.1",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "coldStart",
-						},
-					},
-					{
-						oid: ".1.3.6.1.2.1.1.3.0",
-						e: snmp.MibEntry{
-							MibName: "UNUSED_MIB_NAME",
-							OidText: "sysUpTimeInstance",
-						},
+				{
+					oid: ".1.3.6.1.6.3.1.1.5.1",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "coldStart",
 					},
 				},
-				metrics: []telegraf.Metric{
-					testutil.MustMetric(
-						"snmp_trap", // name
-						map[string]string{ // tags
-							"oid":     ".1.3.6.1.6.3.1.1.5.1",
-							"name":    "coldStart",
-							"mib":     "SNMPv2-MIB",
-							"version": "3",
-							"source":  "127.0.0.1",
-						},
-						map[string]interface{}{ // fields
-							"sysUpTimeInstance": now,
-						},
-						fakeTime,
-					),
+				{
+					oid: ".1.3.6.1.2.1.1.3.0",
+					e: snmp.MibEntry{
+						MibName: "UNUSED_MIB_NAME",
+						OidText: "sysUpTimeInstance",
+					},
 				},
 			},
-			//ordinary v3 coldstart trap SHA384 auth and no priv
-			{
-				name:      "v3 coldStart authSha384NoPriv",
-				version:   gosnmp.Version3,
-				secName:   "authSha384NoPriv",
-				secLevel:  "authNoPriv",
-				authProto: "SHA384",
-				authPass:  "passpass",
-				trap: gosnmp.SnmpTrap{
-					Variables: []gosnmp.SnmpPDU{
-						{
-							Name:  ".1.3.6.1.2.1.1.3.0",
-							Type:  gosnmp.TimeTicks,
-							Value: now,
-						},
-						{
-							Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
-							Type:  gosnmp.ObjectIdentifier,
-							Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
-						},
+			metrics: []telegraf.Metric{
+				testutil.MustMetric(
+					"snmp_trap", // name
+					map[string]string{ // tags
+						"oid":     ".1.3.6.1.6.3.1.1.5.1",
+						"name":    "coldStart",
+						"mib":     "SNMPv2-MIB",
+						"version": "3",
+						"source":  "127.0.0.1",
 					},
-				},
-				entries: []entry{
-					{
-						oid: ".1.3.6.1.6.3.1.1.4.1.0",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "snmpTrapOID.0",
-						},
+					map[string]interface{}{ // fields
+						"sysUpTimeInstance": now,
 					},
+					fakeTime,
+				),
+			},
+		},
+		// ordinary v3 coldstart trap SHA256 auth and no priv
+		{
+			name:      "v3 coldStart authSha256NoPriv",
+			version:   gosnmp.Version3,
+			secName:   "authSha256NoPriv",
+			secLevel:  "authNoPriv",
+			authProto: "SHA256",
+			authPass:  "passpass",
+			trap: gosnmp.SnmpTrap{
+				Variables: []gosnmp.SnmpPDU{
 					{
-						oid: ".1.3.6.1.6.3.1.1.5.1",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "coldStart",
-						},
+						Name:  ".1.3.6.1.2.1.1.3.0",
+						Type:  gosnmp.TimeTicks,
+						Value: now,
 					},
 					{
-						oid: ".1.3.6.1.2.1.1.3.0",
-						e: snmp.MibEntry{
-							MibName: "UNUSED_MIB_NAME",
-							OidText: "sysUpTimeInstance",
-						},
+						Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
+						Type:  gosnmp.ObjectIdentifier,
+						Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
 					},
-				},
-				metrics: []telegraf.Metric{
-					testutil.MustMetric(
-						"snmp_trap", // name
-						map[string]string{ // tags
-							"oid":     ".1.3.6.1.6.3.1.1.5.1",
-							"name":    "coldStart",
-							"mib":     "SNMPv2-MIB",
-							"version": "3",
-							"source":  "127.0.0.1",
-						},
-						map[string]interface{}{ // fields
-							"sysUpTimeInstance": now,
-						},
-						fakeTime,
-					),
 				},
 			},
-			//ordinary v3 coldstart trap SHA512 auth and no priv
-			{
-				name:      "v3 coldStart authShaNoPriv",
-				version:   gosnmp.Version3,
-				secName:   "authSha512NoPriv",
-				secLevel:  "authNoPriv",
-				authProto: "SHA512",
-				authPass:  "passpass",
-				trap: gosnmp.SnmpTrap{
-					Variables: []gosnmp.SnmpPDU{
-						{
-							Name:  ".1.3.6.1.2.1.1.3.0",
-							Type:  gosnmp.TimeTicks,
-							Value: now,
-						},
-						{
-							Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
-							Type:  gosnmp.ObjectIdentifier,
-							Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
-						},
+			entries: []entry{
+				{
+					oid: ".1.3.6.1.6.3.1.1.4.1.0",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "snmpTrapOID.0",
 					},
 				},
-				entries: []entry{
-					{
-						oid: ".1.3.6.1.6.3.1.1.4.1.0",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "snmpTrapOID.0",
-						},
-					},
-					{
-						oid: ".1.3.6.1.6.3.1.1.5.1",
-						e: snmp.MibEntry{
-							MibName: "SNMPv2-MIB",
-							OidText: "coldStart",
-						},
-					},
-					{
-						oid: ".1.3.6.1.2.1.1.3.0",
-						e: snmp.MibEntry{
-							MibName: "UNUSED_MIB_NAME",
-							OidText: "sysUpTimeInstance",
-						},
+				{
+					oid: ".1.3.6.1.6.3.1.1.5.1",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "coldStart",
 					},
 				},
-				metrics: []telegraf.Metric{
-					testutil.MustMetric(
-						"snmp_trap", // name
-						map[string]string{ // tags
-							"oid":     ".1.3.6.1.6.3.1.1.5.1",
-							"name":    "coldStart",
-							"mib":     "SNMPv2-MIB",
-							"version": "3",
-							"source":  "127.0.0.1",
-						},
-						map[string]interface{}{ // fields
-							"sysUpTimeInstance": now,
-						},
-						fakeTime,
-					),
+				{
+					oid: ".1.3.6.1.2.1.1.3.0",
+					e: snmp.MibEntry{
+						MibName: "UNUSED_MIB_NAME",
+						OidText: "sysUpTimeInstance",
+					},
 				},
-			},*/
-		//ordinary v3 coldstart trap SHA auth and no priv
+			},
+			metrics: []telegraf.Metric{
+				testutil.MustMetric(
+					"snmp_trap", // name
+					map[string]string{ // tags
+						"oid":     ".1.3.6.1.6.3.1.1.5.1",
+						"name":    "coldStart",
+						"mib":     "SNMPv2-MIB",
+						"version": "3",
+						"source":  "127.0.0.1",
+					},
+					map[string]interface{}{ // fields
+						"sysUpTimeInstance": now,
+					},
+					fakeTime,
+				),
+			},
+		},
+		// ordinary v3 coldstart trap SHA384 auth and no priv
+		{
+			name:      "v3 coldStart authSha384NoPriv",
+			version:   gosnmp.Version3,
+			secName:   "authSha384NoPriv",
+			secLevel:  "authNoPriv",
+			authProto: "SHA384",
+			authPass:  "passpass",
+			trap: gosnmp.SnmpTrap{
+				Variables: []gosnmp.SnmpPDU{
+					{
+						Name:  ".1.3.6.1.2.1.1.3.0",
+						Type:  gosnmp.TimeTicks,
+						Value: now,
+					},
+					{
+						Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
+						Type:  gosnmp.ObjectIdentifier,
+						Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
+					},
+				},
+			},
+			entries: []entry{
+				{
+					oid: ".1.3.6.1.6.3.1.1.4.1.0",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "snmpTrapOID.0",
+					},
+				},
+				{
+					oid: ".1.3.6.1.6.3.1.1.5.1",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "coldStart",
+					},
+				},
+				{
+					oid: ".1.3.6.1.2.1.1.3.0",
+					e: snmp.MibEntry{
+						MibName: "UNUSED_MIB_NAME",
+						OidText: "sysUpTimeInstance",
+					},
+				},
+			},
+			metrics: []telegraf.Metric{
+				testutil.MustMetric(
+					"snmp_trap", // name
+					map[string]string{ // tags
+						"oid":     ".1.3.6.1.6.3.1.1.5.1",
+						"name":    "coldStart",
+						"mib":     "SNMPv2-MIB",
+						"version": "3",
+						"source":  "127.0.0.1",
+					},
+					map[string]interface{}{ // fields
+						"sysUpTimeInstance": now,
+					},
+					fakeTime,
+				),
+			},
+		},
+		// ordinary v3 coldstart trap SHA512 auth and no priv
+		{
+			name:      "v3 coldStart authShaNoPriv",
+			version:   gosnmp.Version3,
+			secName:   "authSha512NoPriv",
+			secLevel:  "authNoPriv",
+			authProto: "SHA512",
+			authPass:  "passpass",
+			trap: gosnmp.SnmpTrap{
+				Variables: []gosnmp.SnmpPDU{
+					{
+						Name:  ".1.3.6.1.2.1.1.3.0",
+						Type:  gosnmp.TimeTicks,
+						Value: now,
+					},
+					{
+						Name:  ".1.3.6.1.6.3.1.1.4.1.0", // SNMPv2-MIB::snmpTrapOID.0
+						Type:  gosnmp.ObjectIdentifier,
+						Value: ".1.3.6.1.6.3.1.1.5.1", // coldStart
+					},
+				},
+			},
+			entries: []entry{
+				{
+					oid: ".1.3.6.1.6.3.1.1.4.1.0",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "snmpTrapOID.0",
+					},
+				},
+				{
+					oid: ".1.3.6.1.6.3.1.1.5.1",
+					e: snmp.MibEntry{
+						MibName: "SNMPv2-MIB",
+						OidText: "coldStart",
+					},
+				},
+				{
+					oid: ".1.3.6.1.2.1.1.3.0",
+					e: snmp.MibEntry{
+						MibName: "UNUSED_MIB_NAME",
+						OidText: "sysUpTimeInstance",
+					},
+				},
+			},
+			metrics: []telegraf.Metric{
+				testutil.MustMetric(
+					"snmp_trap", // name
+					map[string]string{ // tags
+						"oid":     ".1.3.6.1.6.3.1.1.5.1",
+						"name":    "coldStart",
+						"mib":     "SNMPv2-MIB",
+						"version": "3",
+						"source":  "127.0.0.1",
+					},
+					map[string]interface{}{ // fields
+						"sysUpTimeInstance": now,
+					},
+					fakeTime,
+				),
+			},
+		},
+		// ordinary v3 coldstart trap SHA auth and no priv
 		{
 			name:      "v3 coldStart authShaNoPriv",
 			version:   gosnmp.Version3,
@@ -799,7 +809,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldstart trap MD5 auth and no priv
+		// ordinary v3 coldstart trap MD5 auth and no priv
 		{
 			name:      "v3 coldStart authMD5NoPriv",
 			version:   gosnmp.Version3,
@@ -861,7 +871,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldStart SHA trap auth and AES priv
+		// ordinary v3 coldStart SHA trap auth and AES priv
 		{
 			name:      "v3 coldStart authSHAPrivAES",
 			version:   gosnmp.Version3,
@@ -925,7 +935,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldStart SHA trap auth and DES priv
+		// ordinary v3 coldStart SHA trap auth and DES priv
 		{
 			name:      "v3 coldStart authSHAPrivDES",
 			version:   gosnmp.Version3,
@@ -989,7 +999,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldStart SHA trap auth and AES192 priv
+		// ordinary v3 coldStart SHA trap auth and AES192 priv
 		{
 			name:      "v3 coldStart authSHAPrivAES192",
 			version:   gosnmp.Version3,
@@ -1053,7 +1063,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldStart SHA trap auth and AES192C priv
+		// ordinary v3 coldStart SHA trap auth and AES192C priv
 		{
 			name:      "v3 coldStart authSHAPrivAES192C",
 			version:   gosnmp.Version3,
@@ -1117,7 +1127,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldStart SHA trap auth and AES256 priv
+		// ordinary v3 coldStart SHA trap auth and AES256 priv
 		{
 			name:      "v3 coldStart authSHAPrivAES256",
 			version:   gosnmp.Version3,
@@ -1181,7 +1191,7 @@ func TestReceiveTrap(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldStart SHA trap auth and AES256C priv
+		// ordinary v3 coldStart SHA trap auth and AES256C priv
 		{
 			name:      "v3 coldStart authSHAPrivAES256C",
 			version:   gosnmp.Version3,
@@ -1272,7 +1282,7 @@ func TestReceiveTrap(t *testing.T) {
 				timeFunc: func() time.Time {
 					return fakeTime
 				},
-				//if cold start be answer otherwise err
+				// if cold start be answer otherwise err
 				Log:          testutil.Logger{},
 				Version:      tt.version.String(),
 				SecName:      config.NewSecret([]byte(tt.secName)),
@@ -1286,7 +1296,7 @@ func TestReceiveTrap(t *testing.T) {
 
 			require.NoError(t, s.Init())
 
-			//inject test translator
+			// inject test translator
 			s.transl = newTestTranslator(tt.entries)
 
 			var acc testutil.Accumulator
@@ -1347,7 +1357,7 @@ func TestReceiveTrapMultipleConfig(t *testing.T) {
 		entries []entry
 		metrics []telegraf.Metric
 	}{
-		//ordinary v3 coldStart SHA trap auth and AES priv
+		// ordinary v3 coldStart SHA trap auth and AES priv
 		{
 			name:      "v3 coldStart authSHAPrivAES",
 			version:   gosnmp.Version3,
@@ -1425,7 +1435,7 @@ func TestReceiveTrapMultipleConfig(t *testing.T) {
 				),
 			},
 		},
-		//ordinary v3 coldStart SHA trap auth and AES256 priv
+		// ordinary v3 coldStart SHA trap auth and AES256 priv
 		{
 			name:      "v3 coldStart authSHAPrivAES256",
 			version:   gosnmp.Version3,
@@ -1502,7 +1512,7 @@ func TestReceiveTrapMultipleConfig(t *testing.T) {
 					fakeTime,
 				)},
 		},
-		//ordinary v3 coldStart SHA trap auth and AES256C priv
+		// ordinary v3 coldStart SHA trap auth and AES256C priv
 		{
 			name:      "v3 coldStart authSHAPrivAES256C",
 			version:   gosnmp.Version3,
@@ -1608,7 +1618,7 @@ func TestReceiveTrapMultipleConfig(t *testing.T) {
 				timeFunc: func() time.Time {
 					return fakeTime
 				},
-				//if cold start be answer otherwise err
+				// if cold start be answer otherwise err
 				Log:          testutil.Logger{},
 				Version:      tt.version.String(),
 				SecName:      config.NewSecret([]byte(tt.secName + "1")),
@@ -1637,7 +1647,7 @@ func TestReceiveTrapMultipleConfig(t *testing.T) {
 				timeFunc: func() time.Time {
 					return fakeTime
 				},
-				//if cold start be answer otherwise err
+				// if cold start be answer otherwise err
 				Log:          testutil.Logger{},
 				Version:      tt.version.String(),
 				SecName:      config.NewSecret([]byte(tt.secName + "2")),
@@ -1652,7 +1662,7 @@ func TestReceiveTrapMultipleConfig(t *testing.T) {
 			require.NoError(t, s1.Init())
 			require.NoError(t, s2.Init())
 
-			//inject test translator
+			// inject test translator
 			s1.transl = newTestTranslator(tt.entries)
 			s2.transl = newTestTranslator(tt.entries)
 

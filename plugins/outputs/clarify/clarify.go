@@ -44,7 +44,7 @@ func (c *Clarify) Init() error {
 	if c.Timeout <= 0 {
 		c.Timeout = defaultTimeout
 	}
-	// Not blocking as it doesn't do any http requests, just sets up the necessarry Oauth2 client.
+	// Not blocking as it doesn't do any http requests, just sets up the necessary Oauth2 client.
 	ctx := context.Background()
 	switch {
 	case c.CredentialsFile != "":
@@ -64,12 +64,12 @@ func (c *Clarify) Init() error {
 		}
 		password, err := c.Password.Get()
 		if err != nil {
-			config.ReleaseSecret(username)
+			username.Destroy()
 			return fmt.Errorf("getting password failed: %w", err)
 		}
-		creds := clarify.BasicAuthCredentials(string(username), string(password))
-		config.ReleaseSecret(username)
-		config.ReleaseSecret(password)
+		creds := clarify.BasicAuthCredentials(username.String(), password.String())
+		username.Destroy()
+		password.Destroy()
 		c.client = creds.Client(ctx)
 		return nil
 	}

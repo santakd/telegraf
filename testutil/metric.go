@@ -8,8 +8,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/influxdata/telegraf"
-	telegrafMetric "github.com/influxdata/telegraf/metric"
+	"github.com/influxdata/telegraf/metric"
 )
 
 type metricDiff struct {
@@ -61,7 +62,7 @@ func lessFunc(lhs, rhs *metricDiff) bool {
 
 		if lhs.Fields[i].Value != rhs.Fields[i].Value {
 			ltype := reflect.TypeOf(lhs.Fields[i].Value)
-			rtype := reflect.TypeOf(lhs.Fields[i].Value)
+			rtype := reflect.TypeOf(rhs.Fields[i].Value)
 
 			if ltype.Kind() != rtype.Kind() {
 				return ltype.Kind() < rtype.Kind()
@@ -69,13 +70,13 @@ func lessFunc(lhs, rhs *metricDiff) bool {
 
 			switch v := lhs.Fields[i].Value.(type) {
 			case int64:
-				return v < lhs.Fields[i].Value.(int64)
+				return v < rhs.Fields[i].Value.(int64)
 			case uint64:
-				return v < lhs.Fields[i].Value.(uint64)
+				return v < rhs.Fields[i].Value.(uint64)
 			case float64:
-				return v < lhs.Fields[i].Value.(float64)
+				return v < rhs.Fields[i].Value.(float64)
 			case string:
-				return v < lhs.Fields[i].Value.(string)
+				return v < rhs.Fields[i].Value.(string)
 			case bool:
 				return !v
 			default:
@@ -95,43 +96,43 @@ func lessFunc(lhs, rhs *metricDiff) bool {
 	return false
 }
 
-func newMetricDiff(metric telegraf.Metric) *metricDiff {
-	if metric == nil {
+func newMetricDiff(telegrafMetric telegraf.Metric) *metricDiff {
+	if telegrafMetric == nil {
 		return nil
 	}
 
 	m := &metricDiff{}
-	m.Measurement = metric.Name()
+	m.Measurement = telegrafMetric.Name()
 
-	m.Tags = append(m.Tags, metric.TagList()...)
+	m.Tags = append(m.Tags, telegrafMetric.TagList()...)
 	sort.Slice(m.Tags, func(i, j int) bool {
 		return m.Tags[i].Key < m.Tags[j].Key
 	})
 
-	m.Fields = append(m.Fields, metric.FieldList()...)
+	m.Fields = append(m.Fields, telegrafMetric.FieldList()...)
 	sort.Slice(m.Fields, func(i, j int) bool {
 		return m.Fields[i].Key < m.Fields[j].Key
 	})
 
-	m.Type = metric.Type()
-	m.Time = metric.Time()
+	m.Type = telegrafMetric.Type()
+	m.Time = telegrafMetric.Time()
 	return m
 }
 
-func newMetricStructureDiff(metric telegraf.Metric) *metricDiff {
-	if metric == nil {
+func newMetricStructureDiff(telegrafMetric telegraf.Metric) *metricDiff {
+	if telegrafMetric == nil {
 		return nil
 	}
 
 	m := &metricDiff{}
-	m.Measurement = metric.Name()
+	m.Measurement = telegrafMetric.Name()
 
-	m.Tags = append(m.Tags, metric.TagList()...)
+	m.Tags = append(m.Tags, telegrafMetric.TagList()...)
 	sort.Slice(m.Tags, func(i, j int) bool {
 		return m.Tags[i].Key < m.Tags[j].Key
 	})
 
-	for _, f := range metric.FieldList() {
+	for _, f := range telegrafMetric.FieldList() {
 		sf := &telegraf.Field{
 			Key:   f.Key,
 			Value: reflect.Zero(reflect.TypeOf(f.Value)).Interface(),
@@ -142,8 +143,8 @@ func newMetricStructureDiff(metric telegraf.Metric) *metricDiff {
 		return m.Fields[i].Key < m.Fields[j].Key
 	})
 
-	m.Type = metric.Type()
-	m.Time = metric.Time()
+	m.Type = telegrafMetric.Type()
+	m.Time = telegrafMetric.Time()
 	return m
 }
 
@@ -244,6 +245,49 @@ func RequireMetricsEqual(t testing.TB, expected, actual []telegraf.Metric, opts 
 	}
 }
 
+// RequireMetricsSubset halts the test with an error if the expected array
+// of metrics is not a subset of the actual metrics.
+func RequireMetricsSubset(t testing.TB, expected, actual []telegraf.Metric, opts ...cmp.Option) {
+	if x, ok := t.(helper); ok {
+		x.Helper()
+	}
+
+	lhs := make([]*metricDiff, 0, len(expected))
+	for _, m := range expected {
+		lhs = append(lhs, newMetricDiff(m))
+	}
+	rhs := make([]*metricDiff, 0, len(actual))
+	for _, m := range actual {
+		rhs = append(rhs, newMetricDiff(m))
+	}
+
+	// Sort the metrics
+	sort.SliceStable(lhs, func(i, j int) bool {
+		return lessFunc(lhs[i], lhs[j])
+	})
+	sort.SliceStable(rhs, func(i, j int) bool {
+		return lessFunc(rhs[i], rhs[j])
+	})
+
+	// Filter the right-hand-side (aka actual) by being contained in the
+	// left-hand-side (aka expected).
+	rhsFiltered := make([]*metricDiff, 0, len(rhs))
+	for _, r := range rhs {
+		// Find the next element in the sorted list that might match
+		for _, l := range lhs {
+			if cmp.Equal(l, r, opts...) {
+				rhsFiltered = append(rhsFiltered, r)
+				break
+			}
+		}
+	}
+
+	opts = append(opts, cmpopts.EquateNaNs())
+	if diff := cmp.Diff(lhs, rhsFiltered, opts...); diff != "" {
+		t.Fatalf("[]telegraf.Metric\n--- expected\n+++ actual\n%s", diff)
+	}
+}
+
 // RequireMetricsStructureEqual halts the test with an error if the array of
 // metrics is structural different. Structure means that the metric differs
 // in either name, tag key/values, time (if not ignored) or fields. For fields
@@ -268,6 +312,51 @@ func RequireMetricsStructureEqual(t testing.TB, expected, actual []telegraf.Metr
 	}
 }
 
+// RequireMetricsStructureSubset halts the test with an error if the expected
+// array of metrics is not a subset of the actual metrics. The equality here
+// is only based on the structure (i.e. key name and value types) and NOT on
+// the actual value.
+func RequireMetricsStructureSubset(t testing.TB, expected, actual []telegraf.Metric, opts ...cmp.Option) {
+	if x, ok := t.(helper); ok {
+		x.Helper()
+	}
+
+	lhs := make([]*metricDiff, 0, len(expected))
+	for _, m := range expected {
+		lhs = append(lhs, newMetricStructureDiff(m))
+	}
+	rhs := make([]*metricDiff, 0, len(actual))
+	for _, m := range actual {
+		rhs = append(rhs, newMetricStructureDiff(m))
+	}
+
+	// Sort the metrics
+	sort.SliceStable(lhs, func(i, j int) bool {
+		return lessFunc(lhs[i], lhs[j])
+	})
+	sort.SliceStable(rhs, func(i, j int) bool {
+		return lessFunc(rhs[i], rhs[j])
+	})
+
+	// Filter the right-hand-side (aka actual) by being contained in the
+	// left-hand-side (aka expected).
+	rhsFiltered := make([]*metricDiff, 0, len(rhs))
+	for _, r := range rhs {
+		// Find the next element in the sorted list that might match
+		for _, l := range lhs {
+			if cmp.Equal(l, r, opts...) {
+				rhsFiltered = append(rhsFiltered, r)
+				break
+			}
+		}
+	}
+
+	opts = append(opts, cmpopts.EquateNaNs())
+	if diff := cmp.Diff(lhs, rhsFiltered, opts...); diff != "" {
+		t.Fatalf("[]telegraf.Metric\n--- expected\n+++ actual\n%s", diff)
+	}
+}
+
 // MustMetric creates a new metric.
 func MustMetric(
 	name string,
@@ -276,11 +365,31 @@ func MustMetric(
 	tm time.Time,
 	tp ...telegraf.ValueType,
 ) telegraf.Metric {
-	m := telegrafMetric.New(name, tags, fields, tm, tp...)
+	m := metric.New(name, tags, fields, tm, tp...)
 	return m
 }
 
 func FromTestMetric(met *Metric) telegraf.Metric {
-	m := telegrafMetric.New(met.Measurement, met.Tags, met.Fields, met.Time, met.Type)
+	m := metric.New(met.Measurement, met.Tags, met.Fields, met.Time, met.Type)
 	return m
+}
+
+func ToTestMetric(tm telegraf.Metric) *Metric {
+	tags := make(map[string]string, len(tm.TagList()))
+	for _, t := range tm.TagList() {
+		tags[t.Key] = t.Value
+	}
+
+	fields := make(map[string]interface{}, len(tm.FieldList()))
+	for _, f := range tm.FieldList() {
+		fields[f.Key] = f.Value
+	}
+
+	return &Metric{
+		Measurement: tm.Name(),
+		Fields:      fields,
+		Tags:        tags,
+		Time:        tm.Time(),
+		Type:        tm.Type(),
+	}
 }

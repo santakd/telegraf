@@ -16,15 +16,11 @@ import (
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
+	"github.com/influxdata/telegraf/metric"
 	"github.com/influxdata/telegraf/plugins/inputs"
 	"github.com/influxdata/telegraf/plugins/parsers/influx"
 	"github.com/influxdata/telegraf/testutil"
 )
-
-func TestMain(m *testing.M) {
-	telegraf.Debug = false
-	os.Exit(m.Run())
-}
 
 func TestControllers(t *testing.T) {
 	var tests = []struct {
@@ -138,7 +134,7 @@ func TestControllers(t *testing.T) {
 				Name:             "dummy",
 				Controller:       tt.controller,
 				TransmissionMode: tt.mode,
-				Log:              testutil.Logger{},
+				Log:              testutil.Logger{Quiet: true},
 			}
 			err := plugin.Init()
 			if tt.errmsg != "" {
@@ -159,10 +155,9 @@ func TestRetrySuccessful(t *testing.T) {
 	require.NoError(t, serv.ListenTCP("localhost:1502"))
 	defer serv.Close()
 
-	// Make read on coil-registers fail for some trials by making the device
-	// to appear busy
+	// Make read on coil-registers fail for some trials by making the device to appear busy
 	serv.RegisterFunctionHandler(1,
-		func(s *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
+		func(*mbserver.Server, mbserver.Framer) ([]byte, *mbserver.Exception) {
 			data := make([]byte, 2)
 			data[0] = byte(1)
 			data[1] = byte(value)
@@ -180,7 +175,7 @@ func TestRetrySuccessful(t *testing.T) {
 		Name:       "TestRetry",
 		Controller: "tcp://localhost:1502",
 		Retries:    maxretries,
-		Log:        testutil.Logger{},
+		Log:        testutil.Logger{Quiet: true},
 	}
 	modbus.SlaveID = 1
 	modbus.Coils = []fieldDefinition{
@@ -221,7 +216,7 @@ func TestRetryFailExhausted(t *testing.T) {
 
 	// Make the read on coils fail with busy
 	serv.RegisterFunctionHandler(1,
-		func(s *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
+		func(*mbserver.Server, mbserver.Framer) ([]byte, *mbserver.Exception) {
 			data := make([]byte, 2)
 			data[0] = byte(1)
 			data[1] = byte(0)
@@ -233,7 +228,7 @@ func TestRetryFailExhausted(t *testing.T) {
 		Name:       "TestRetryFailExhausted",
 		Controller: "tcp://localhost:1502",
 		Retries:    maxretries,
-		Log:        testutil.Logger{},
+		Log:        testutil.Logger{Quiet: true},
 	}
 	modbus.SlaveID = 1
 	modbus.Coils = []fieldDefinition{
@@ -249,7 +244,7 @@ func TestRetryFailExhausted(t *testing.T) {
 
 	require.NoError(t, modbus.Gather(&acc))
 	require.Len(t, acc.Errors, 1)
-	require.EqualError(t, acc.FirstError(), "slave 1: modbus: exception '6' (server device busy), function '129'")
+	require.ErrorContains(t, acc.FirstError(), `slave 1 on controller "tcp://localhost:1502": modbus: exception '6' (server device busy)`)
 }
 
 func TestRetryFailIllegal(t *testing.T) {
@@ -262,7 +257,7 @@ func TestRetryFailIllegal(t *testing.T) {
 	// Make the read on coils fail with illegal function preventing retry
 	counter := 0
 	serv.RegisterFunctionHandler(1,
-		func(s *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
+		func(*mbserver.Server, mbserver.Framer) ([]byte, *mbserver.Exception) {
 			counter++
 			data := make([]byte, 2)
 			data[0] = byte(1)
@@ -276,7 +271,7 @@ func TestRetryFailIllegal(t *testing.T) {
 		Name:       "TestRetryFailExhausted",
 		Controller: "tcp://localhost:1502",
 		Retries:    maxretries,
-		Log:        testutil.Logger{},
+		Log:        testutil.Logger{Quiet: true},
 	}
 	modbus.SlaveID = 1
 	modbus.Coils = []fieldDefinition{
@@ -292,8 +287,8 @@ func TestRetryFailIllegal(t *testing.T) {
 
 	require.NoError(t, modbus.Gather(&acc))
 	require.Len(t, acc.Errors, 1)
-	require.EqualError(t, acc.FirstError(), "slave 1: modbus: exception '1' (illegal function), function '129'")
-	require.Equal(t, counter, 1)
+	require.ErrorContains(t, acc.FirstError(), `slave 1 on controller "tcp://localhost:1502": modbus: exception '1' (illegal function)`)
+	require.Equal(t, 1, counter)
 }
 
 func TestCases(t *testing.T) {
@@ -315,7 +310,7 @@ func TestCases(t *testing.T) {
 	inputs.Add("modbus", func() telegraf.Input { return &Modbus{} })
 
 	// Define a function to return the register value as data
-	readFunc := func(s *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
+	readFunc := func(_ *mbserver.Server, frame mbserver.Framer) ([]byte, *mbserver.Exception) {
 		data := frame.GetData()
 		register := binary.BigEndian.Uint16(data[0:2])
 		numRegs := binary.BigEndian.Uint16(data[2:4])
@@ -495,8 +490,8 @@ func TestRegisterWorkaroundsOneRequestPerField(t *testing.T) {
 		Name:              "Test",
 		Controller:        "tcp://localhost:1502",
 		ConfigurationType: "register",
-		Log:               testutil.Logger{},
-		Workarounds:       ModbusWorkarounds{OnRequestPerField: true},
+		Log:               testutil.Logger{Quiet: true},
+		Workarounds:       workarounds{OnRequestPerField: true},
 	}
 	plugin.SlaveID = 1
 	plugin.HoldingRegisters = []fieldDefinition{
@@ -545,8 +540,8 @@ func TestRequestsWorkaroundsReadCoilsStartingAtZeroRegister(t *testing.T) {
 		Name:              "Test",
 		Controller:        "tcp://localhost:1502",
 		ConfigurationType: "register",
-		Log:               testutil.Logger{},
-		Workarounds:       ModbusWorkarounds{ReadCoilsStartingAtZero: true},
+		Log:               testutil.Logger{Quiet: true},
+		Workarounds:       workarounds{ReadCoilsStartingAtZero: true},
 	}
 	plugin.SlaveID = 1
 	plugin.Coils = []fieldDefinition{
@@ -570,4 +565,180 @@ func TestRequestsWorkaroundsReadCoilsStartingAtZeroRegister(t *testing.T) {
 	// is now too large (beyond max-coils-per-read) after zero enforcement.
 	require.Equal(t, maxQuantityCoils, plugin.requests[1].coil[1].address)
 	require.Equal(t, uint16(1), plugin.requests[1].coil[1].length)
+}
+
+func TestWorkaroundsStringRegisterLocation(t *testing.T) {
+	tests := []struct {
+		name     string
+		location string
+		order    string
+		content  []byte
+		expected string
+	}{
+		{
+			name:  "default big-endian",
+			order: "ABCD",
+			content: []byte{
+				0x4d, 0x6f, 0x64, 0x62, 0x75, 0x73, 0x20, 0x53,
+				0x74, 0x72, 0x69, 0x6e, 0x67, 0x00,
+			},
+			expected: "Modbus String",
+		},
+		{
+			name:  "default little-endian",
+			order: "DCBA",
+			content: []byte{
+				0x6f, 0x4d, 0x62, 0x64, 0x73, 0x75, 0x53, 0x20,
+				0x72, 0x74, 0x6e, 0x69, 0x00, 0x67,
+			},
+			expected: "Modbus String",
+		},
+		{
+			name:     "both big-endian",
+			location: "both",
+			order:    "ABCD",
+			content: []byte{
+				0x4d, 0x6f, 0x64, 0x62, 0x75, 0x73, 0x20, 0x53,
+				0x74, 0x72, 0x69, 0x6e, 0x67, 0x00,
+			},
+			expected: "Modbus String",
+		},
+		{
+			name:     "both little-endian",
+			location: "both",
+			order:    "DCBA",
+			content: []byte{
+				0x6f, 0x4d, 0x62, 0x64, 0x73, 0x75, 0x53, 0x20,
+				0x72, 0x74, 0x6e, 0x69, 0x00, 0x67,
+			},
+			expected: "Modbus String",
+		},
+		{
+			name:     "lower big-endian",
+			location: "lower",
+			order:    "ABCD",
+			content: []byte{
+				0x00, 0x4d, 0x00, 0x6f, 0x00, 0x64, 0x00, 0x62,
+				0x00, 0x75, 0x00, 0x73, 0x00, 0x20, 0x00, 0x53,
+				0x00, 0x74, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6e,
+				0x00, 0x67, 0x00, 0x00,
+			},
+			expected: "Modbus String",
+		},
+		{
+			name:     "lower little-endian",
+			location: "lower",
+			order:    "DCBA",
+			content: []byte{
+				0x4d, 0x00, 0x6f, 0x00, 0x64, 0x00, 0x62, 0x00,
+				0x75, 0x00, 0x73, 0x00, 0x20, 0x00, 0x53, 0x00,
+				0x74, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6e, 0x00,
+				0x67, 0x00, 0x00, 0x00,
+			},
+			expected: "Modbus String",
+		},
+		{
+			name:     "upper big-endian",
+			location: "upper",
+			order:    "ABCD",
+			content: []byte{
+				0x4d, 0x00, 0x6f, 0x00, 0x64, 0x00, 0x62, 0x00,
+				0x75, 0x00, 0x73, 0x00, 0x20, 0x00, 0x53, 0x00,
+				0x74, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6e, 0x00,
+				0x67, 0x00, 0x00, 0x00,
+			},
+			expected: "Modbus String",
+		},
+		{
+			name:     "upper little-endian",
+			location: "upper",
+			order:    "DCBA",
+			content: []byte{
+				0x00, 0x4d, 0x00, 0x6f, 0x00, 0x64, 0x00, 0x62,
+				0x00, 0x75, 0x00, 0x73, 0x00, 0x20, 0x00, 0x53,
+				0x00, 0x74, 0x00, 0x72, 0x00, 0x69, 0x00, 0x6e,
+				0x00, 0x67, 0x00, 0x00,
+			},
+			expected: "Modbus String",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const addr = uint16(8)
+			length := uint16(len(tt.content) / 2)
+
+			expected := []telegraf.Metric{
+				metric.New(
+					"modbus",
+					map[string]string{
+						"name":     "Test",
+						"slave_id": "1",
+						"type":     "holding_register",
+					},
+					map[string]interface{}{
+						"value": tt.expected,
+					},
+					time.Unix(0, 0),
+				),
+			}
+
+			plugin := &Modbus{
+				Name:              "Test",
+				Controller:        "tcp://localhost:1502",
+				ConfigurationType: "request",
+				Log:               testutil.Logger{Quiet: true},
+				Workarounds:       workarounds{StringRegisterLocation: tt.location},
+				configurationPerRequest: configurationPerRequest{
+					Requests: []requestDefinition{
+						{
+							SlaveID:      1,
+							ByteOrder:    tt.order,
+							RegisterType: "holding",
+							Fields: []requestFieldDefinition{
+								{
+									Address:   addr,
+									Name:      "value",
+									InputType: "STRING",
+									Length:    length,
+								},
+							},
+						},
+					},
+				},
+			}
+			require.NoError(t, plugin.Init())
+
+			// Create a mock server and fill in the data
+			serv := mbserver.NewServer()
+			require.NoError(t, serv.ListenTCP("localhost:1502"))
+			defer serv.Close()
+
+			handler := mb.NewTCPClientHandler("localhost:1502")
+			require.NoError(t, handler.Connect())
+			defer handler.Close()
+			client := mb.NewClient(handler)
+			_, err := client.WriteMultipleRegisters(addr, length, tt.content)
+			require.NoError(t, err)
+
+			// Gather the data
+			var acc testutil.Accumulator
+			require.NoError(t, plugin.Gather(&acc))
+
+			// Compare
+			actual := acc.GetTelegrafMetrics()
+			testutil.RequireMetricsEqual(t, expected, actual, testutil.IgnoreTime())
+		})
+	}
+}
+
+func TestWorkaroundsStringRegisterLocationInvalid(t *testing.T) {
+	plugin := &Modbus{
+		Name:              "Test",
+		Controller:        "tcp://localhost:1502",
+		ConfigurationType: "request",
+		Log:               testutil.Logger{Quiet: true},
+		Workarounds:       workarounds{StringRegisterLocation: "foo"},
+	}
+	require.ErrorContains(t, plugin.Init(), `invalid 'string_register_location'`)
 }

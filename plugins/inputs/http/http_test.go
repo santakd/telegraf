@@ -4,16 +4,22 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"math/rand"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/influxdata/telegraf"
-	httpconfig "github.com/influxdata/telegraf/plugins/common/http"
+	"github.com/influxdata/telegraf/config"
+	common_http "github.com/influxdata/telegraf/plugins/common/http"
 	"github.com/influxdata/telegraf/plugins/common/oauth"
 	httpplugin "github.com/influxdata/telegraf/plugins/inputs/http"
 	"github.com/influxdata/telegraf/plugins/parsers/csv"
@@ -26,7 +32,11 @@ import (
 func TestHTTPWithJSONFormat(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
-			_, _ = w.Write([]byte(simpleJSON))
+			if _, err := w.Write([]byte(simpleJSON)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -56,7 +66,7 @@ func TestHTTPWithJSONFormat(t *testing.T) {
 	var metric = acc.Metrics[0]
 	require.Equal(t, metric.Measurement, metricName)
 	require.Len(t, acc.Metrics[0].Fields, 1)
-	require.Equal(t, acc.Metrics[0].Fields["a"], 1.2)
+	require.InDelta(t, 1.2, acc.Metrics[0].Fields["a"], testutil.DefaultDelta)
 	require.Equal(t, acc.Metrics[0].Tags["url"], address)
 }
 
@@ -66,7 +76,11 @@ func TestHTTPHeaders(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
 			if r.Header.Get(header) == headerValue {
-				_, _ = w.Write([]byte(simpleJSON))
+				if _, err := w.Write([]byte(simpleJSON)); err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					t.Error(err)
+					return
+				}
 			} else {
 				w.WriteHeader(http.StatusForbidden)
 			}
@@ -77,9 +91,10 @@ func TestHTTPHeaders(t *testing.T) {
 	defer fakeServer.Close()
 
 	address := fakeServer.URL + "/endpoint"
+	headerSecret := config.NewSecret([]byte(headerValue))
 	plugin := &httpplugin.HTTP{
 		URLs:    []string{address},
-		Headers: map[string]string{header: headerValue},
+		Headers: map[string]*config.Secret{header: &headerSecret},
 		Log:     testutil.Logger{},
 	}
 
@@ -98,7 +113,11 @@ func TestHTTPContentLengthHeader(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
 			if r.Header.Get("Content-Length") != "" {
-				_, _ = w.Write([]byte(simpleJSON))
+				if _, err := w.Write([]byte(simpleJSON)); err != nil {
+					w.WriteHeader(http.StatusInternalServerError)
+					t.Error(err)
+					return
+				}
 			} else {
 				w.WriteHeader(http.StatusForbidden)
 			}
@@ -111,7 +130,7 @@ func TestHTTPContentLengthHeader(t *testing.T) {
 	address := fakeServer.URL + "/endpoint"
 	plugin := &httpplugin.HTTP{
 		URLs:    []string{address},
-		Headers: map[string]string{},
+		Headers: map[string]*config.Secret{},
 		Body:    "{}",
 		Log:     testutil.Logger{},
 	}
@@ -128,7 +147,7 @@ func TestHTTPContentLengthHeader(t *testing.T) {
 }
 
 func TestInvalidStatusCode(t *testing.T) {
-	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer fakeServer.Close()
@@ -151,7 +170,7 @@ func TestInvalidStatusCode(t *testing.T) {
 }
 
 func TestSuccessStatusCodes(t *testing.T) {
-	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
 	}))
 	defer fakeServer.Close()
@@ -216,7 +235,7 @@ func TestBodyAndContentEncoding(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
 	defer ts.Close()
 
-	address := fmt.Sprintf("http://%s", ts.Listener.Addr().String())
+	address := "http://" + ts.Listener.Addr().String()
 
 	tests := []struct {
 		name             string
@@ -277,7 +296,7 @@ func TestBodyAndContentEncoding(t *testing.T) {
 				Log:             testutil.Logger{},
 			},
 			queryHandlerFunc: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, r.Header.Get("Content-Encoding"), "gzip")
+				require.Equal(t, "gzip", r.Header.Get("Content-Encoding"))
 
 				gr, err := gzip.NewReader(r.Body)
 				require.NoError(t, err)
@@ -307,7 +326,7 @@ func TestBodyAndContentEncoding(t *testing.T) {
 	}
 }
 
-type TestHandlerFunc func(t *testing.T, w http.ResponseWriter, r *http.Request)
+type testHandlerFunc func(t *testing.T, w http.ResponseWriter, r *http.Request)
 
 func TestOAuthClientCredentialsGrant(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
@@ -315,14 +334,14 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 
 	var token = "2YotnFZFEjr1zCsicMWpAA"
 
-	u, err := url.Parse(fmt.Sprintf("http://%s", ts.Listener.Addr().String()))
+	u, err := url.Parse("http://" + ts.Listener.Addr().String())
 	require.NoError(t, err)
 
 	tests := []struct {
 		name         string
 		plugin       *httpplugin.HTTP
-		tokenHandler TestHandlerFunc
-		handler      TestHandlerFunc
+		tokenHandler testHandlerFunc
+		handler      testHandlerFunc
 	}{
 		{
 			name: "no credentials",
@@ -331,7 +350,7 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 				Log:  testutil.Logger{},
 			},
 			handler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
-				require.Len(t, r.Header["Authorization"], 0)
+				require.Empty(t, r.Header["Authorization"])
 				w.WriteHeader(http.StatusOK)
 			},
 		},
@@ -339,7 +358,7 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 			name: "success",
 			plugin: &httpplugin.HTTP{
 				URLs: []string{u.String() + "/write"},
-				HTTPClientConfig: httpconfig.HTTPClientConfig{
+				HTTPClientConfig: common_http.HTTPClientConfig{
 					OAuth2Config: oauth.OAuth2Config{
 						ClientID:     "howdy",
 						ClientSecret: "secret",
@@ -349,7 +368,7 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 				},
 				Log: testutil.Logger{},
 			},
-			tokenHandler: func(t *testing.T, w http.ResponseWriter, r *http.Request) {
+			tokenHandler: func(t *testing.T, w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 				values := url.Values{}
 				values.Add("access_token", token)
@@ -398,7 +417,11 @@ func TestOAuthClientCredentialsGrant(t *testing.T) {
 func TestHTTPWithCSVFormat(t *testing.T) {
 	fakeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/endpoint" {
-			_, _ = w.Write([]byte(simpleCSVWithHeader))
+			if _, err := w.Write([]byte(simpleCSVWithHeader)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		} else {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -433,6 +456,81 @@ func TestHTTPWithCSVFormat(t *testing.T) {
 				"b": 3.1415,
 			},
 			time.Unix(0, 0),
+		),
+	}
+
+	var acc testutil.Accumulator
+	require.NoError(t, plugin.Init())
+	require.NoError(t, acc.GatherError(plugin.Gather))
+	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
+
+	// Run the parser a second time to test for correct stateful handling
+	acc.ClearMetrics()
+	require.NoError(t, acc.GatherError(plugin.Gather))
+	testutil.RequireMetricsEqual(t, expected, acc.GetTelegrafMetrics(), testutil.IgnoreTime())
+}
+
+const (
+	httpOverUnixScheme = "http+unix"
+)
+
+func TestConnectionOverUnixSocket(t *testing.T) {
+	ts := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/data" {
+			w.Header().Set("Content-Type", "text/csv")
+			if _, err := w.Write([]byte(simpleCSVWithHeader)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+
+	unixListenAddr := filepath.Join(os.TempDir(), fmt.Sprintf("httptestserver.%d.sock", rand.Intn(1_000_000)))
+	t.Cleanup(func() { os.Remove(unixListenAddr) })
+
+	unixListener, err := net.Listen("unix", unixListenAddr)
+	require.NoError(t, err)
+
+	ts.Listener = unixListener
+	ts.Start()
+	defer ts.Close()
+
+	// NOTE: Remove ":" from windows filepath and replace all "\" with "/".
+	//       This is *required* so that the unix socket path plays well with unixtransport.
+	replacer := strings.NewReplacer(":", "", "\\", "/")
+	sockPath := replacer.Replace(unixListenAddr)
+
+	address := fmt.Sprintf("%s://%s:/data", httpOverUnixScheme, sockPath)
+	plugin := &httpplugin.HTTP{
+		URLs: []string{address},
+		Log:  testutil.Logger{},
+	}
+
+	plugin.SetParserFunc(func() (telegraf.Parser, error) {
+		parser := &csv.Parser{
+			MetricName:  "metricName",
+			SkipRows:    3,
+			ColumnNames: []string{"a", "b", "c"},
+			TagColumns:  []string{"c"},
+		}
+		err := parser.Init()
+		return parser, err
+	})
+
+	expected := []telegraf.Metric{
+		testutil.MustMetric("metricName",
+			map[string]string{
+				"url": address,
+				"c":   "ok",
+			},
+			map[string]interface{}{
+				"a": 1.2,
+				"b": 3.1415,
+			},
+			time.Unix(22000, 0),
 		),
 	}
 

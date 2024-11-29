@@ -59,25 +59,38 @@ func TestDovecotIntegration(t *testing.T) {
 		defer close(waitCh)
 
 		la, err := net.ResolveUnixAddr("unix", addr)
-		require.NoError(t, err)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 
 		l, err := net.ListenUnix("unix", la)
-		require.NoError(t, err)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		defer l.Close()
 		defer os.Remove(addr)
 
 		waitCh <- 0
 		conn, err := l.Accept()
-		require.NoError(t, err)
+		if err != nil {
+			t.Error(err)
+			return
+		}
 		defer conn.Close()
 
 		readertp := textproto.NewReader(bufio.NewReader(conn))
-		_, err = readertp.ReadLine()
-		require.NoError(t, err)
+		if _, err = readertp.ReadLine(); err != nil {
+			t.Error(err)
+			return
+		}
 
 		buf := bytes.NewBufferString(sampleGlobal)
-		_, err = io.Copy(conn, buf)
-		require.NoError(t, err)
+		if _, err = io.Copy(conn, buf); err != nil {
+			t.Error(err)
+			return
+		}
 	}()
 
 	// Wait for server to start
@@ -94,27 +107,21 @@ func TestDovecotIntegration(t *testing.T) {
 	tags = map[string]string{"server": "dovecot.test", "type": "global"}
 	buf := bytes.NewBufferString(sampleGlobal)
 
-	err = gatherStats(buf, &acc, "dovecot.test", "global")
-	require.NoError(t, err)
-
+	gatherStats(buf, &acc, "dovecot.test", "global")
 	acc.AssertContainsTaggedFields(t, "dovecot", fields, tags)
 
 	// Test type=domain
 	tags = map[string]string{"server": "dovecot.test", "type": "domain", "domain": "domain.test"}
 	buf = bytes.NewBufferString(sampleDomain)
 
-	err = gatherStats(buf, &acc, "dovecot.test", "domain")
-	require.NoError(t, err)
-
+	gatherStats(buf, &acc, "dovecot.test", "domain")
 	acc.AssertContainsTaggedFields(t, "dovecot", fields, tags)
 
 	// Test type=ip
 	tags = map[string]string{"server": "dovecot.test", "type": "ip", "ip": "192.168.0.100"}
 	buf = bytes.NewBufferString(sampleIP)
 
-	err = gatherStats(buf, &acc, "dovecot.test", "ip")
-	require.NoError(t, err)
-
+	gatherStats(buf, &acc, "dovecot.test", "ip")
 	acc.AssertContainsTaggedFields(t, "dovecot", fields, tags)
 
 	// Test type=user
@@ -146,9 +153,7 @@ func TestDovecotIntegration(t *testing.T) {
 	tags = map[string]string{"server": "dovecot.test", "type": "user", "user": "user.1@domain.test"}
 	buf = bytes.NewBufferString(sampleUser)
 
-	err = gatherStats(buf, &acc, "dovecot.test", "user")
-	require.NoError(t, err)
-
+	gatherStats(buf, &acc, "dovecot.test", "user")
 	acc.AssertContainsTaggedFields(t, "dovecot", fields, tags)
 }
 
@@ -192,7 +197,7 @@ func TestDovecotContainerIntegration(t *testing.T) {
 	container := testutil.Container{
 		Image:        "dovecot/dovecot",
 		ExposedPorts: []string{servicePort},
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/etc/dovecot/dovecot.conf": testdata,
 		},
 		WaitingFor: wait.ForAll(

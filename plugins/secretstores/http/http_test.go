@@ -28,7 +28,7 @@ func TestCases(t *testing.T) {
 	require.NotEmpty(t, folders)
 
 	// Set up for file inputs
-	secretstores.Add("http", func(id string) telegraf.SecretStore {
+	secretstores.Add("http", func(string) telegraf.SecretStore {
 		return &HTTP{Log: testutil.Logger{}}
 	})
 
@@ -62,7 +62,11 @@ func TestCases(t *testing.T) {
 
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/secrets" {
-					_, _ = w.Write(input)
+					if _, err = w.Write(input); err != nil {
+						w.WriteHeader(http.StatusInternalServerError)
+						t.Error(err)
+						return
+					}
 				} else {
 					w.WriteHeader(http.StatusNotFound)
 				}
@@ -154,8 +158,12 @@ func TestGetErrors(t *testing.T) {
 }
 
 func TestResolver(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err := w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -195,8 +203,12 @@ func TestGetResolverErrors(t *testing.T) {
 	require.ErrorContains(t, err, "context deadline exceeded")
 	dummy.Close()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`[{"test": "aedMZXaLR246OHHjVtJKXQ=="}]`))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err = w.Write([]byte(`[{"test": "aedMZXaLR246OHHjVtJKXQ=="}]`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -228,8 +240,12 @@ func TestInvalidServerResponse(t *testing.T) {
 	require.NoError(t, err)
 	defer dummy.Close()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`[somerandomebytes`))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if _, err = w.Write([]byte(`[somerandomebytes`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -263,7 +279,11 @@ func TestAdditionalHeaders(t *testing.T) {
 		if r.Host != "" {
 			actual.Add("host", r.Host)
 		}
-		_, _ = w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`))
+		if _, err = w.Write([]byte(`{"test": "aedMZXaLR246OHHjVtJKXQ=="}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -305,12 +325,20 @@ func TestServerReturnCodes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/", "/200":
-			_, _ = w.Write([]byte(`{}`))
+			if _, err = w.Write([]byte(`{}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/201":
 			w.WriteHeader(201)
 		case "/300":
 			w.WriteHeader(300)
-			_, _ = w.Write([]byte(`{}`))
+			if _, err = w.Write([]byte(`{}`)); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				t.Error(err)
+				return
+			}
 		case "/401":
 			w.WriteHeader(401)
 		default:
@@ -350,7 +378,11 @@ func TestAuthenticationBasic(t *testing.T) {
 	var header http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header = r.Header
-		_, _ = w.Write([]byte(`{}`))
+		if _, err = w.Write([]byte(`{}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 
@@ -377,7 +409,11 @@ func TestAuthenticationToken(t *testing.T) {
 	var header http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header = r.Header
-		_, _ = w.Write([]byte(`{}`))
+		if _, err = w.Write([]byte(`{}`)); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			t.Error(err)
+			return
+		}
 	}))
 	defer server.Close()
 

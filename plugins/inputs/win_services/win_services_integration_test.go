@@ -17,7 +17,7 @@ func TestListIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
-	provider := &MgProvider{}
+	provider := &mgProvider{}
 	scmgr, err := provider.Connect()
 	require.NoError(t, err)
 	defer func() {
@@ -41,7 +41,7 @@ func TestEmptyListIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping integration test in short mode")
 	}
-	provider := &MgProvider{}
+	provider := &mgProvider{}
 	scmgr, err := provider.Connect()
 	require.NoError(t, err)
 	defer func() {
@@ -50,7 +50,7 @@ func TestEmptyListIntegration(t *testing.T) {
 	}()
 
 	winServices := &WinServices{
-		ServiceNames: []string{},
+		ServiceNames: make([]string, 0),
 	}
 
 	require.NoError(t, winServices.Init())
@@ -66,7 +66,7 @@ func TestGatherErrorsIntegration(t *testing.T) {
 	ws := &WinServices{
 		Log:          testutil.Logger{},
 		ServiceNames: InvalidServices,
-		mgrProvider:  &MgProvider{},
+		mgrProvider:  &mgProvider{},
 	}
 
 	require.NoError(t, ws.Init())

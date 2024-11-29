@@ -16,9 +16,13 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/benbjohnson/clock"
+	"github.com/seancfoley/ipaddress-go/ipaddr"
+
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/internal"
+	"github.com/influxdata/telegraf/plugins/common/cookie"
 	"github.com/influxdata/telegraf/plugins/common/tls"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
@@ -32,40 +36,120 @@ const (
 	defaultResponseBodyMaxSize = 32 * 1024 * 1024
 )
 
-// HTTPResponse struct
 type HTTPResponse struct {
-	Address         string   `toml:"address" deprecated:"1.12.0;use 'urls' instead"`
-	URLs            []string `toml:"urls"`
-	HTTPProxy       string   `toml:"http_proxy"`
-	Body            string
-	Method          string
-	ResponseTimeout config.Duration
-	HTTPHeaderTags  map[string]string `toml:"http_header_tags"`
-	Headers         map[string]string
-	FollowRedirects bool
+	Address         string              `toml:"address" deprecated:"1.12.0;1.35.0;use 'urls' instead"`
+	URLs            []string            `toml:"urls"`
+	HTTPProxy       string              `toml:"http_proxy"`
+	Body            string              `toml:"body"`
+	BodyForm        map[string][]string `toml:"body_form"`
+	Method          string              `toml:"method"`
+	ResponseTimeout config.Duration     `toml:"response_timeout"`
+	HTTPHeaderTags  map[string]string   `toml:"http_header_tags"`
+	Headers         map[string]string   `toml:"headers"`
+	FollowRedirects bool                `toml:"follow_redirects"`
 	// Absolute path to file with Bearer token
 	BearerToken         string      `toml:"bearer_token"`
 	ResponseBodyField   string      `toml:"response_body_field"`
 	ResponseBodyMaxSize config.Size `toml:"response_body_max_size"`
-	ResponseStringMatch string
-	ResponseStatusCode  int
-	Interface           string
+	ResponseStringMatch string      `toml:"response_string_match"`
+	ResponseStatusCode  int         `toml:"response_status_code"`
+	Interface           string      `toml:"interface"`
 	// HTTP Basic Auth Credentials
 	Username config.Secret `toml:"username"`
 	Password config.Secret `toml:"password"`
 	tls.ClientConfig
+	cookie.CookieAuthConfig
 
-	Log telegraf.Logger
+	Log telegraf.Logger `toml:"-"`
 
 	compiledStringMatch *regexp.Regexp
-	client              httpClient
+	clients             []client
+}
+
+type client struct {
+	httpClient httpClient
+	address    string
 }
 
 type httpClient interface {
+	// Do implements [http.Client]
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// Set the proxy. A configured proxy overwrites the system wide proxy.
+func (*HTTPResponse) SampleConfig() string {
+	return sampleConfig
+}
+
+func (h *HTTPResponse) Init() error {
+	// Compile the body regex if it exists
+	if h.ResponseStringMatch != "" {
+		var err error
+		h.compiledStringMatch, err = regexp.Compile(h.ResponseStringMatch)
+		if err != nil {
+			return fmt.Errorf("failed to compile regular expression %q: %w", h.ResponseStringMatch, err)
+		}
+	}
+
+	// Set default values
+	if h.ResponseTimeout < config.Duration(time.Second) {
+		h.ResponseTimeout = config.Duration(time.Second * 5)
+	}
+	if h.Method == "" {
+		h.Method = "GET"
+	}
+
+	if len(h.URLs) == 0 {
+		if h.Address == "" {
+			h.URLs = []string{"http://localhost"}
+		} else {
+			h.URLs = []string{h.Address}
+		}
+	}
+
+	h.clients = make([]client, 0, len(h.URLs))
+	for _, u := range h.URLs {
+		addr, err := url.Parse(u)
+		if err != nil {
+			return fmt.Errorf("%q is not a valid address: %w", u, err)
+		}
+
+		if addr.Scheme != "http" && addr.Scheme != "https" {
+			return fmt.Errorf("%q is not a valid address: only http and https types are supported", u)
+		}
+
+		cl, err := h.createHTTPClient(*addr)
+		if err != nil {
+			return err
+		}
+
+		h.clients = append(h.clients, client{httpClient: cl, address: u})
+	}
+
+	return nil
+}
+
+// Gather gets all metric fields and tags and returns any errors it encounters
+func (h *HTTPResponse) Gather(acc telegraf.Accumulator) error {
+	for _, c := range h.clients {
+		// Prepare data
+		var fields map[string]interface{}
+		var tags map[string]string
+
+		// Gather data
+		fields, tags, err := h.httpGather(c)
+		if err != nil {
+			acc.AddError(err)
+			continue
+		}
+
+		// Add metrics
+		acc.AddFields("http_response", fields, tags)
+	}
+
+	return nil
+}
+
+// Set the proxy. A configured proxy overwrites the system-wide proxy.
 func getProxyFunc(httpProxy string) func(*http.Request) (*url.URL, error) {
 	if httpProxy == "" {
 		return http.ProxyFromEnvironment
@@ -76,14 +160,14 @@ func getProxyFunc(httpProxy string) func(*http.Request) (*url.URL, error) {
 			return nil, errors.New("bad proxy: " + err.Error())
 		}
 	}
-	return func(r *http.Request) (*url.URL, error) {
+	return func(*http.Request) (*url.URL, error) {
 		return proxyURL, nil
 	}
 }
 
-// createHTTPClient creates an http client which will timeout at the specified
+// createHTTPClient creates an http client which will time out at the specified
 // timeout period and can follow redirects if specified
-func (h *HTTPResponse) createHTTPClient() (*http.Client, error) {
+func (h *HTTPResponse) createHTTPClient(address url.URL) (*http.Client, error) {
 	tlsCfg, err := h.ClientConfig.TLSConfig()
 	if err != nil {
 		return nil, err
@@ -92,7 +176,7 @@ func (h *HTTPResponse) createHTTPClient() (*http.Client, error) {
 	dialer := &net.Dialer{}
 
 	if h.Interface != "" {
-		dialer.LocalAddr, err = localAddress(h.Interface)
+		dialer.LocalAddr, err = localAddress(h.Interface, address)
 		if err != nil {
 			return nil, err
 		}
@@ -109,14 +193,21 @@ func (h *HTTPResponse) createHTTPClient() (*http.Client, error) {
 	}
 
 	if !h.FollowRedirects {
-		client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		client.CheckRedirect = func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		}
 	}
+
+	if h.CookieAuthConfig.URL != "" {
+		if err := h.CookieAuthConfig.Start(client, h.Log, clock.New()); err != nil {
+			return nil, err
+		}
+	}
+
 	return client, nil
 }
 
-func localAddress(interfaceName string) (net.Addr, error) {
+func localAddress(interfaceName string, address url.URL) (net.Addr, error) {
 	i, err := net.InterfaceByName(interfaceName)
 	if err != nil {
 		return nil, err
@@ -127,14 +218,43 @@ func localAddress(interfaceName string) (net.Addr, error) {
 		return nil, err
 	}
 
+	urlInIPv6, zone := isURLInIPv6(address)
 	for _, addr := range addrs {
 		if naddr, ok := addr.(*net.IPNet); ok {
-			// leaving port set to zero to let kernel pick
-			return &net.TCPAddr{IP: naddr.IP}, nil
+			ipNetInIPv6 := isIPNetInIPv6(naddr)
+
+			// choose interface address in the same format as server address
+			if ipNetInIPv6 == urlInIPv6 {
+				// leaving port set to zero to let kernel pick, but set zone
+				return &net.TCPAddr{IP: naddr.IP, Zone: zone}, nil
+			}
 		}
 	}
 
-	return nil, fmt.Errorf("cannot create local address for interface %q", interfaceName)
+	return nil, fmt.Errorf("cannot create local address for interface %q and server address %q", interfaceName, address.String())
+}
+
+// isURLInIPv6 returns (true, zoneName) only when URL is in IPv6 format.
+// For other cases (host part of url cannot be successfully validated, doesn't contain address at all or is in IPv4 format), it returns (false, "").
+func isURLInIPv6(address url.URL) (bool, string) {
+	host := ipaddr.NewHostName(address.Host)
+	if err := host.Validate(); err != nil {
+		return false, ""
+	}
+	if hostAddr := host.AsAddress(); hostAddr != nil {
+		if ipv6 := hostAddr.ToIPv6(); ipv6 != nil {
+			return true, ipv6.GetZone().String()
+		}
+	}
+
+	return false, ""
+}
+
+// isIPNetInIPv6 returns true only when IPNet can be represented in IPv6 format.
+// For other cases (address cannot be successfully parsed or is in IPv4 format), it returns false.
+func isIPNetInIPv6(address *net.IPNet) bool {
+	ipAddr, err := ipaddr.NewIPAddressFromNetIPNet(address)
+	return err == nil && ipAddr.ToIPv6() != nil
 }
 
 func setResult(resultString string, fields map[string]interface{}, tags map[string]string) {
@@ -185,16 +305,25 @@ func setError(err error, fields map[string]interface{}, tags map[string]string) 
 }
 
 // HTTPGather gathers all fields and returns any errors it encounters
-func (h *HTTPResponse) httpGather(u string) (map[string]interface{}, map[string]string, error) {
+func (h *HTTPResponse) httpGather(cl client) (map[string]interface{}, map[string]string, error) {
 	// Prepare fields and tags
 	fields := make(map[string]interface{})
-	tags := map[string]string{"server": u, "method": h.Method}
+	tags := map[string]string{"server": cl.address, "method": h.Method}
 
 	var body io.Reader
 	if h.Body != "" {
 		body = strings.NewReader(h.Body)
+	} else if len(h.BodyForm) != 0 {
+		values := url.Values{}
+		for k, vs := range h.BodyForm {
+			for _, v := range vs {
+				values.Add(k, v)
+			}
+		}
+		body = strings.NewReader(values.Encode())
 	}
-	request, err := http.NewRequest(h.Method, u, body)
+
+	request, err := http.NewRequest(h.Method, cl.address, body)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -225,14 +354,14 @@ func (h *HTTPResponse) httpGather(u string) (map[string]interface{}, map[string]
 
 	// Start Timer
 	start := time.Now()
-	resp, err := h.client.Do(request)
+	resp, err := cl.httpClient.Do(request)
 	responseTime := time.Since(start).Seconds()
 
 	// If an error in returned, it means we are dealing with a network error, as
 	// HTTP error codes do not generate errors in the net/http library
 	if err != nil {
 		// Log error
-		h.Log.Debugf("Network error while polling %s: %s", u, err.Error())
+		h.Log.Debugf("Network error while polling %s: %s", cl.address, err.Error())
 
 		// Get error details
 		if setError(err, fields, tags) == nil {
@@ -272,7 +401,7 @@ func (h *HTTPResponse) httpGather(u string) (map[string]interface{}, map[string]
 		h.setBodyReadError("The body of the HTTP Response is too large", bodyBytes, fields, tags)
 		return fields, tags, nil
 	} else if err != nil {
-		h.setBodyReadError(fmt.Sprintf("Failed to read body of HTTP Response : %s", err.Error()), bodyBytes, fields, tags)
+		h.setBodyReadError("Failed to read body of HTTP Response : "+err.Error(), bodyBytes, fields, tags)
 		return fields, tags, nil
 	}
 
@@ -320,82 +449,12 @@ func (h *HTTPResponse) httpGather(u string) (map[string]interface{}, map[string]
 
 // Set result in case of a body read error
 func (h *HTTPResponse) setBodyReadError(errorMsg string, bodyBytes []byte, fields map[string]interface{}, tags map[string]string) {
-	h.Log.Debugf(errorMsg)
+	h.Log.Debug(errorMsg)
 	setResult("body_read_error", fields, tags)
 	fields["content_length"] = len(bodyBytes)
 	if h.ResponseStringMatch != "" {
 		fields["response_string_match"] = 0
 	}
-}
-
-func (*HTTPResponse) SampleConfig() string {
-	return sampleConfig
-}
-
-// Gather gets all metric fields and tags and returns any errors it encounters
-func (h *HTTPResponse) Gather(acc telegraf.Accumulator) error {
-	// Compile the body regex if it exist
-	if h.compiledStringMatch == nil {
-		var err error
-		h.compiledStringMatch, err = regexp.Compile(h.ResponseStringMatch)
-		if err != nil {
-			return fmt.Errorf("failed to compile regular expression %q: %w", h.ResponseStringMatch, err)
-		}
-	}
-
-	// Set default values
-	if h.ResponseTimeout < config.Duration(time.Second) {
-		h.ResponseTimeout = config.Duration(time.Second * 5)
-	}
-	// Check send and expected string
-	if h.Method == "" {
-		h.Method = "GET"
-	}
-
-	if len(h.URLs) == 0 {
-		if h.Address == "" {
-			h.URLs = []string{"http://localhost"}
-		} else {
-			h.URLs = []string{h.Address}
-		}
-	}
-
-	if h.client == nil {
-		client, err := h.createHTTPClient()
-		if err != nil {
-			return err
-		}
-		h.client = client
-	}
-
-	for _, u := range h.URLs {
-		addr, err := url.Parse(u)
-		if err != nil {
-			acc.AddError(err)
-			continue
-		}
-
-		if addr.Scheme != "http" && addr.Scheme != "https" {
-			acc.AddError(errors.New("only http and https are supported"))
-			continue
-		}
-
-		// Prepare data
-		var fields map[string]interface{}
-		var tags map[string]string
-
-		// Gather data
-		fields, tags, err = h.httpGather(u)
-		if err != nil {
-			acc.AddError(err)
-			continue
-		}
-
-		// Add metrics
-		acc.AddFields("http_response", fields, tags)
-	}
-
-	return nil
 }
 
 func (h *HTTPResponse) setRequestAuth(request *http.Request) error {
@@ -407,13 +466,13 @@ func (h *HTTPResponse) setRequestAuth(request *http.Request) error {
 	if err != nil {
 		return fmt.Errorf("getting username failed: %w", err)
 	}
-	defer config.ReleaseSecret(username)
+	defer username.Destroy()
 	password, err := h.Password.Get()
 	if err != nil {
 		return fmt.Errorf("getting password failed: %w", err)
 	}
-	defer config.ReleaseSecret(password)
-	request.SetBasicAuth(string(username), string(password))
+	defer password.Destroy()
+	request.SetBasicAuth(username.String(), password.String())
 
 	return nil
 }

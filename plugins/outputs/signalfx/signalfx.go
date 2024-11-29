@@ -86,8 +86,8 @@ func (s *SignalFx) Connect() error {
 	if err != nil {
 		return fmt.Errorf("getting token failed: %w", err)
 	}
-	client.AuthToken = string(token)
-	config.ReleaseSecret(token)
+	client.AuthToken = token.String()
+	token.Destroy()
 
 	if s.IngestURL != "" {
 		client.DatapointEndpoint = datapointEndpointForIngestURL(s.IngestURL)
@@ -199,7 +199,7 @@ func (s *SignalFx) isEventIncluded(name string) bool {
 }
 
 // getMetricName combines telegraf fields and tags into a full metric name
-func getMetricName(metric string, field string) string {
+func getMetricName(metric, field string) string {
 	name := metric
 
 	// Include field in metric name when it adds to the metric name

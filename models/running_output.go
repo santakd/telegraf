@@ -1,11 +1,15 @@
 package models
 
 import (
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/influxdata/telegraf"
+	"github.com/influxdata/telegraf/internal"
+	logging "github.com/influxdata/telegraf/logger"
 	"github.com/influxdata/telegraf/selfstat"
 )
 
@@ -19,10 +23,11 @@ const (
 
 // OutputConfig containing name and filter
 type OutputConfig struct {
-	Name   string
-	Alias  string
-	ID     string
-	Filter Filter
+	Name                 string
+	Alias                string
+	ID                   string
+	StartupErrorBehavior string
+	Filter               Filter
 
 	FlushInterval     time.Duration
 	FlushJitter       time.Duration
@@ -32,6 +37,11 @@ type OutputConfig struct {
 	NameOverride string
 	NamePrefix   string
 	NameSuffix   string
+
+	BufferStrategy  string
+	BufferDirectory string
+
+	LogLevel string
 }
 
 // RunningOutput contains the output configuration
@@ -47,31 +57,33 @@ type RunningOutput struct {
 
 	MetricsFiltered selfstat.Stat
 	WriteTime       selfstat.Stat
+	StartupErrors   selfstat.Stat
 
 	BatchReady chan time.Time
 
-	buffer *Buffer
+	buffer Buffer
 	log    telegraf.Logger
+
+	started bool
+	retries uint64
 
 	aggMutex sync.Mutex
 }
 
-func NewRunningOutput(
-	output telegraf.Output,
-	config *OutputConfig,
-	batchSize int,
-	bufferLimit int,
-) *RunningOutput {
+func NewRunningOutput(output telegraf.Output, config *OutputConfig, batchSize, bufferLimit int) *RunningOutput {
 	tags := map[string]string{"output": config.Name}
 	if config.Alias != "" {
 		tags["alias"] = config.Alias
 	}
 
 	writeErrorsRegister := selfstat.Register("write", "errors", tags)
-	logger := NewLogger("outputs", config.Name, config.Alias)
-	logger.OnErr(func() {
+	logger := logging.New("outputs", config.Name, config.Alias)
+	logger.RegisterErrorCallback(func() {
 		writeErrorsRegister.Incr(1)
 	})
+	if err := logger.SetLogLevel(config.LogLevel); err != nil {
+		logger.Error(err)
+	}
 	SetLoggerOnPlugin(output, logger)
 
 	if config.MetricBufferLimit > 0 {
@@ -87,8 +99,13 @@ func NewRunningOutput(
 		batchSize = DefaultMetricBatchSize
 	}
 
+	b, err := NewBuffer(config.Name, config.ID, config.Alias, bufferLimit, config.BufferStrategy, config.BufferDirectory)
+	if err != nil {
+		panic(err)
+	}
+
 	ro := &RunningOutput{
-		buffer:            NewBuffer(config.Name, config.Alias, bufferLimit),
+		buffer:            b,
 		BatchReady:        make(chan time.Time, 1),
 		Output:            output,
 		Config:            config,
@@ -102,6 +119,11 @@ func NewRunningOutput(
 		WriteTime: selfstat.RegisterTiming(
 			"write",
 			"write_time_ns",
+			tags,
+		),
+		StartupErrors: selfstat.Register(
+			"write",
+			"startup_errors",
 			tags,
 		),
 		log: logger,
@@ -119,7 +141,20 @@ func (r *RunningOutput) metricFiltered(metric telegraf.Metric) {
 	metric.Drop()
 }
 
+func (r *RunningOutput) ID() string {
+	if p, ok := r.Output.(telegraf.PluginWithID); ok {
+		return p.ID()
+	}
+	return r.Config.ID
+}
+
 func (r *RunningOutput) Init() error {
+	switch r.Config.StartupErrorBehavior {
+	case "", "error", "retry", "ignore":
+	default:
+		return fmt.Errorf("invalid 'startup_error_behavior' setting %q", r.Config.StartupErrorBehavior)
+	}
+
 	if p, ok := r.Output.(telegraf.Initializer); ok {
 		err := p.Init()
 		if err != nil {
@@ -129,16 +164,64 @@ func (r *RunningOutput) Init() error {
 	return nil
 }
 
-func (r *RunningOutput) ID() string {
-	if p, ok := r.Output.(telegraf.PluginWithID); ok {
-		return p.ID()
+func (r *RunningOutput) Connect() error {
+	// Try to connect and exit early on success
+	err := r.Output.Connect()
+	if err == nil {
+		r.started = true
+		return nil
 	}
-	return r.Config.ID
+	r.StartupErrors.Incr(1)
+
+	// Check if the plugin reports a retry-able error, otherwise we exit.
+	var serr *internal.StartupError
+	if !errors.As(err, &serr) || !serr.Retry {
+		return err
+	}
+
+	// Handle the retry-able error depending on the configured behavior
+	switch r.Config.StartupErrorBehavior {
+	case "", "error": // fall-trough to return the actual error
+	case "retry":
+		r.log.Infof("Connect failed: %v; retrying...", err)
+		return nil
+	case "ignore":
+		return &internal.FatalError{Err: serr}
+	default:
+		r.log.Errorf("Invalid 'startup_error_behavior' setting %q", r.Config.StartupErrorBehavior)
+	}
+
+	return err
+}
+
+// Close closes the output
+func (r *RunningOutput) Close() {
+	if err := r.Output.Close(); err != nil {
+		r.log.Errorf("Error closing output: %v", err)
+	}
+
+	if err := r.buffer.Close(); err != nil {
+		r.log.Errorf("Error closing output buffer: %v", err)
+	}
 }
 
 // AddMetric adds a metric to the output.
-// Takes ownership of metric
+// The given metric will be copied if the output selects the metric.
 func (r *RunningOutput) AddMetric(metric telegraf.Metric) {
+	ok, err := r.Config.Filter.Select(metric)
+	if err != nil {
+		r.log.Errorf("filtering failed: %v", err)
+	} else if !ok {
+		r.MetricsFiltered.Incr(1)
+		return
+	}
+
+	r.add(metric.Copy())
+}
+
+// AddMetricNoCopy adds a metric to the output.
+// Takes ownership of metric regardless of whether the output selects it for outputting.
+func (r *RunningOutput) AddMetricNoCopy(metric telegraf.Metric) {
 	ok, err := r.Config.Filter.Select(metric)
 	if err != nil {
 		r.log.Errorf("filtering failed: %v", err)
@@ -147,6 +230,10 @@ func (r *RunningOutput) AddMetric(metric telegraf.Metric) {
 		return
 	}
 
+	r.add(metric)
+}
+
+func (r *RunningOutput) add(metric telegraf.Metric) {
 	r.Config.Filter.Modify(metric)
 	if len(metric.FieldList()) == 0 {
 		r.metricFiltered(metric)
@@ -188,6 +275,22 @@ func (r *RunningOutput) AddMetric(metric telegraf.Metric) {
 // Write writes all metrics to the output, stopping when all have been sent on
 // or error.
 func (r *RunningOutput) Write() error {
+	// Try to connect if we are not yet started up
+	if !r.started {
+		r.retries++
+		if err := r.Output.Connect(); err != nil {
+			var serr *internal.StartupError
+			if !errors.As(err, &serr) || !serr.Retry || !serr.Partial {
+				r.StartupErrors.Incr(1)
+				return internal.ErrNotConnected
+			}
+			r.log.Debugf("Partially connected after %d attempts", r.retries)
+		} else {
+			r.started = true
+			r.log.Debugf("Successfully connected after %d attempts", r.retries)
+		}
+	}
+
 	if output, ok := r.Output.(telegraf.AggregatingOutput); ok {
 		r.aggMutex.Lock()
 		metrics := output.Push()
@@ -220,6 +323,17 @@ func (r *RunningOutput) Write() error {
 
 // WriteBatch writes a single batch of metrics to the output.
 func (r *RunningOutput) WriteBatch() error {
+	// Try to connect if we are not yet started up
+	if !r.started {
+		r.retries++
+		if err := r.Output.Connect(); err != nil {
+			r.StartupErrors.Incr(1)
+			return internal.ErrNotConnected
+		}
+		r.started = true
+		r.log.Debugf("Successfully connected after %d attempts", r.retries)
+	}
+
 	batch := r.buffer.Batch(r.MetricBatchSize)
 	if len(batch) == 0 {
 		return nil
@@ -233,14 +347,6 @@ func (r *RunningOutput) WriteBatch() error {
 	r.buffer.Accept(batch)
 
 	return nil
-}
-
-// Close closes the output
-func (r *RunningOutput) Close() {
-	err := r.Output.Close()
-	if err != nil {
-		r.log.Errorf("Error closing output: %v", err)
-	}
 }
 
 func (r *RunningOutput) writeMetrics(metrics []telegraf.Metric) error {
@@ -263,7 +369,11 @@ func (r *RunningOutput) writeMetrics(metrics []telegraf.Metric) error {
 
 func (r *RunningOutput) LogBufferStatus() {
 	nBuffer := r.buffer.Len()
-	r.log.Debugf("Buffer fullness: %d / %d metrics", nBuffer, r.MetricBufferLimit)
+	if r.Config.BufferStrategy == "disk" {
+		r.log.Debugf("Buffer fullness: %d metrics", nBuffer)
+	} else {
+		r.log.Debugf("Buffer fullness: %d / %d metrics", nBuffer, r.MetricBufferLimit)
+	}
 }
 
 func (r *RunningOutput) Log() telegraf.Logger {

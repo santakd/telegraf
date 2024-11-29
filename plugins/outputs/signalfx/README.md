@@ -1,6 +1,10 @@
 # SignalFx Output Plugin
 
-The SignalFx output plugin sends metrics to [SignalFx][docs].
+This plugin writes metrics to [SignalFx][docs].
+
+⭐ Telegraf v1.18.0
+🏷️ applications
+💻 all
 
 [docs]: https://docs.signalfx.com/en/latest/
 
@@ -34,7 +38,7 @@ to use them.
 
   ## You can optionally provide a custom ingest url instead of the
   ## signalfx_realm option above if you are using a gateway or proxy
-  ## instance.  This option takes precident over signalfx_realm.
+  ## instance.  This option takes precedence over signalfx_realm.
   ingest_url = "https://my-custom-ingest/"
 
   ## Event typed metrics are omitted by default,

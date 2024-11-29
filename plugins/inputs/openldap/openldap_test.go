@@ -28,8 +28,6 @@ func TestOpenldapMockResult(t *testing.T) {
 				Attributes: []*ldap.EntryAttribute{{Name: "monitorCounter", Values: []string{"1"}}},
 			},
 		},
-		Referrals: []string{},
-		Controls:  []ldap.Control{},
 	}
 
 	o := &Openldap{
@@ -120,7 +118,7 @@ func TestOpenldapStartTLSIntegration(t *testing.T) {
 			"LDAP_TLS_CERT_FILE":  "server.crt",
 			"LDAP_TLS_KEY_FILE":   "server.key",
 		},
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/server.pem": tlsPem,
 			"/server.crt": tlsCert,
 			"/server.key": tlsKey,
@@ -181,7 +179,7 @@ func TestOpenldapLDAPSIntegration(t *testing.T) {
 			"LDAP_TLS_CERT_FILE":  "server.crt",
 			"LDAP_TLS_KEY_FILE":   "server.key",
 		},
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/server.pem": tlsPem,
 			"/server.crt": tlsCert,
 			"/server.key": tlsKey,
@@ -237,7 +235,7 @@ func TestOpenldapInvalidSSLIntegration(t *testing.T) {
 			"LDAP_TLS_CERT_FILE":  "server.crt",
 			"LDAP_TLS_KEY_FILE":   "server.key",
 		},
-		BindMounts: map[string]string{
+		Files: map[string]string{
 			"/server.pem": tlsPem,
 			"/server.crt": tlsCert,
 			"/server.key": tlsKey,

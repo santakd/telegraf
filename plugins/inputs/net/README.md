@@ -21,9 +21,8 @@ See the [CONFIGURATION.md][CONFIGURATION.md] for more details.
   ## Setting interfaces will tell it to gather these explicit interfaces,
   ## regardless of status. When specifying an interface, glob-style
   ## patterns are also supported.
-  ##
   # interfaces = ["eth*", "enp0s[0-1]", "lo"]
-  ##
+
   ## On linux systems telegraf also collects protocol stats.
   ## Setting ignore_protocol_stats to true will skip reporting of protocol metrics.
   ##
@@ -47,6 +46,7 @@ Fields (all platforms):
 * err_out - The total number of transmit errors detected by the interface
 * drop_in - The total number of received packets dropped by the interface
 * drop_out - The total number of transmitted packets dropped by the interface
+* speed - The interface's latest or current speed value, in Mbits/sec. May be -1 if unsupported by the interface
 
 Different platforms gather the data above with different mechanisms. Telegraf
 uses the ([gopsutil](https://github.com/shirou/gopsutil)) package, which under

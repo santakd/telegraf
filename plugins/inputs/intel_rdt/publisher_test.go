@@ -7,8 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/influxdata/telegraf/testutil"
-	"github.com/stretchr/testify/assert"
 )
 
 var metricsValues = map[string]float64{
@@ -40,25 +41,25 @@ func TestParseCoresMeasurement(t *testing.T) {
 
 		result, err := parseCoresMeasurement(measurement)
 
-		assert.Nil(t, err)
-		assert.Equal(t, expectedCores, result.cores)
-		assert.Equal(t, expectedTimestamp, result.time)
-		assert.Equal(t, result.values[0], metricsValues["IPC"])
-		assert.Equal(t, result.values[1], metricsValues["LLC_Misses"])
-		assert.Equal(t, result.values[2], metricsValues["LLC"])
-		assert.Equal(t, result.values[3], metricsValues["MBL"])
-		assert.Equal(t, result.values[4], metricsValues["MBR"])
-		assert.Equal(t, result.values[5], metricsValues["MBT"])
+		require.NoError(t, err)
+		require.Equal(t, expectedCores, result.cores)
+		require.Equal(t, expectedTimestamp, result.time)
+		require.InDelta(t, result.values[0], metricsValues["IPC"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[1], metricsValues["LLC_Misses"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[2], metricsValues["LLC"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[3], metricsValues["MBL"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[4], metricsValues["MBR"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[5], metricsValues["MBT"], testutil.DefaultDelta)
 	})
 	t.Run("not valid measurement string", func(t *testing.T) {
 		measurement := "not, valid, measurement"
 
 		result, err := parseCoresMeasurement(measurement)
 
-		assert.NotNil(t, err)
-		assert.Equal(t, "", result.cores)
-		assert.Nil(t, result.values)
-		assert.Equal(t, time.Time{}, result.time)
+		require.Error(t, err)
+		require.Equal(t, "", result.cores)
+		require.Nil(t, result.values)
+		require.Equal(t, time.Time{}, result.time)
 	})
 	t.Run("not valid values string", func(t *testing.T) {
 		measurement := fmt.Sprintf("%s,%s,%s,%s,%f,%f,%f,%f",
@@ -73,10 +74,10 @@ func TestParseCoresMeasurement(t *testing.T) {
 
 		result, err := parseCoresMeasurement(measurement)
 
-		assert.NotNil(t, err)
-		assert.Equal(t, "", result.cores)
-		assert.Nil(t, result.values)
-		assert.Equal(t, time.Time{}, result.time)
+		require.Error(t, err)
+		require.Equal(t, "", result.cores)
+		require.Nil(t, result.values)
+		require.Equal(t, time.Time{}, result.time)
 	})
 	t.Run("not valid timestamp format", func(t *testing.T) {
 		invalidTimestamp := "2020-08-12-21 13:34:"
@@ -92,10 +93,10 @@ func TestParseCoresMeasurement(t *testing.T) {
 
 		result, err := parseCoresMeasurement(measurement)
 
-		assert.NotNil(t, err)
-		assert.Equal(t, "", result.cores)
-		assert.Nil(t, result.values)
-		assert.Equal(t, time.Time{}, result.time)
+		require.Error(t, err)
+		require.Equal(t, "", result.cores)
+		require.Nil(t, result.values)
+		require.Equal(t, time.Time{}, result.time)
 	})
 }
 
@@ -126,16 +127,16 @@ func TestParseProcessesMeasurement(t *testing.T) {
 		}
 		result, err := parseProcessesMeasurement(newMeasurement)
 
-		assert.Nil(t, err)
-		assert.Equal(t, processName, result.process)
-		assert.Equal(t, expectedCores, result.cores)
-		assert.Equal(t, expectedTimestamp, result.time)
-		assert.Equal(t, result.values[0], metricsValues["IPC"])
-		assert.Equal(t, result.values[1], metricsValues["LLC_Misses"])
-		assert.Equal(t, result.values[2], metricsValues["LLC"])
-		assert.Equal(t, result.values[3], metricsValues["MBL"])
-		assert.Equal(t, result.values[4], metricsValues["MBR"])
-		assert.Equal(t, result.values[5], metricsValues["MBT"])
+		require.NoError(t, err)
+		require.Equal(t, processName, result.process)
+		require.Equal(t, expectedCores, result.cores)
+		require.Equal(t, expectedTimestamp, result.time)
+		require.InDelta(t, result.values[0], metricsValues["IPC"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[1], metricsValues["LLC_Misses"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[2], metricsValues["LLC"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[3], metricsValues["MBL"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[4], metricsValues["MBR"], testutil.DefaultDelta)
+		require.InDelta(t, result.values[5], metricsValues["MBT"], testutil.DefaultDelta)
 	})
 
 	invalidTimestamp := "2020-20-20-31"
@@ -185,11 +186,11 @@ func TestParseProcessesMeasurement(t *testing.T) {
 			}
 			result, err := parseProcessesMeasurement(newMeasurement)
 
-			assert.NotNil(t, err)
-			assert.Equal(t, "", result.process)
-			assert.Equal(t, "", result.cores)
-			assert.Nil(t, result.values)
-			assert.Equal(t, time.Time{}, result.time)
+			require.Error(t, err)
+			require.Equal(t, "", result.process)
+			require.Equal(t, "", result.cores)
+			require.Nil(t, result.values)
+			require.Equal(t, time.Time{}, result.time)
 		})
 	}
 }
@@ -197,7 +198,7 @@ func TestParseProcessesMeasurement(t *testing.T) {
 func TestAddToAccumulatorCores(t *testing.T) {
 	t.Run("shortened false", func(t *testing.T) {
 		var acc testutil.Accumulator
-		publisher := Publisher{acc: &acc}
+		publisher := publisher{acc: &acc}
 
 		cores := "1,2,3"
 		metricsValues := []float64{1, 2, 3, 4, 5, 6}
@@ -211,7 +212,7 @@ func TestAddToAccumulatorCores(t *testing.T) {
 	})
 	t.Run("shortened true", func(t *testing.T) {
 		var acc testutil.Accumulator
-		publisher := Publisher{acc: &acc, shortenedMetrics: true}
+		publisher := publisher{acc: &acc, shortenedMetrics: true}
 
 		cores := "1,2,3"
 		metricsValues := []float64{1, 2, 3, 4, 5, 6}
@@ -228,7 +229,7 @@ func TestAddToAccumulatorCores(t *testing.T) {
 func TestAddToAccumulatorProcesses(t *testing.T) {
 	t.Run("shortened false", func(t *testing.T) {
 		var acc testutil.Accumulator
-		publisher := Publisher{acc: &acc}
+		publisher := publisher{acc: &acc}
 
 		process := "process_name"
 		cores := "1,2,3"
@@ -243,7 +244,7 @@ func TestAddToAccumulatorProcesses(t *testing.T) {
 	})
 	t.Run("shortened true", func(t *testing.T) {
 		var acc testutil.Accumulator
-		publisher := Publisher{acc: &acc, shortenedMetrics: true}
+		publisher := publisher{acc: &acc, shortenedMetrics: true}
 
 		process := "process_name"
 		cores := "1,2,3"

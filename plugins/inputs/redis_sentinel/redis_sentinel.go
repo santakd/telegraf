@@ -4,6 +4,7 @@ package redis_sentinel
 import (
 	"bufio"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"net/url"
@@ -76,8 +77,7 @@ func (r *RedisSentinel) Init() error {
 		}
 
 		var address string
-		tags := map[string]string{}
-
+		tags := make(map[string]string, 2)
 		switch u.Scheme {
 		case "tcp":
 			address = u.Host
@@ -238,14 +238,14 @@ func (client *RedisSentinelClient) gatherMasterStats(acc telegraf.Accumulator) (
 	for _, master := range masters {
 		master, ok := master.([]interface{})
 		if !ok {
-			return masterNames, fmt.Errorf("unable to process master response")
+			return masterNames, errors.New("unable to process master response")
 		}
 
 		m := toMap(master)
 
 		masterName, ok := m["name"]
 		if !ok {
-			return masterNames, fmt.Errorf("unable to resolve master name")
+			return masterNames, errors.New("unable to resolve master name")
 		}
 		masterNames = append(masterNames, masterName)
 
@@ -279,7 +279,7 @@ func (client *RedisSentinelClient) gatherReplicaStats(acc telegraf.Accumulator, 
 	for _, replica := range replicas {
 		replica, ok := replica.([]interface{})
 		if !ok {
-			return fmt.Errorf("unable to process replica response")
+			return errors.New("unable to process replica response")
 		}
 
 		rm := toMap(replica)
@@ -311,7 +311,7 @@ func (client *RedisSentinelClient) gatherSentinelStats(acc telegraf.Accumulator,
 	for _, sentinel := range sentinels {
 		sentinel, ok := sentinel.([]interface{})
 		if !ok {
-			return fmt.Errorf("unable to process sentinel response")
+			return errors.New("unable to process sentinel response")
 		}
 
 		sm := toMap(sentinel)
@@ -327,11 +327,7 @@ func (client *RedisSentinelClient) gatherSentinelStats(acc telegraf.Accumulator,
 }
 
 // converts `sentinel masters <name>` output to tags and fields
-func convertSentinelMastersOutput(
-	globalTags map[string]string,
-	master map[string]string,
-	quorumErr error,
-) (map[string]string, map[string]interface{}, error) {
+func convertSentinelMastersOutput(globalTags, master map[string]string, quorumErr error) (map[string]string, map[string]interface{}, error) {
 	tags := globalTags
 
 	tags["master"] = master["name"]

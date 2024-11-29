@@ -95,15 +95,17 @@ type metricEntry struct {
 type objectMap map[string]*objectRef
 
 type objectRef struct {
-	name         string
-	altID        string
-	ref          types.ManagedObjectReference
-	parentRef    *types.ManagedObjectReference //Pointer because it must be nillable
-	guest        string
-	dcname       string
-	rpname       string
-	customValues map[string]string
-	lookup       map[string]string
+	name              string
+	altID             string
+	ref               types.ManagedObjectReference
+	parentRef         *types.ManagedObjectReference // Pointer because it must be nillable
+	guest             string
+	memorySizeMB      int32
+	memoryReservation int32
+	dcname            string
+	rpname            string
+	customValues      map[string]string
+	lookup            map[string]string
 }
 
 func (e *Endpoint) getParent(obj *objectRef, res *resourceKind) (*objectRef, bool) {
@@ -272,7 +274,7 @@ func anythingEnabled(ex []string) bool {
 	return true
 }
 
-func newFilterOrPanic(include []string, exclude []string) filter.Filter {
+func newFilterOrPanic(include, exclude []string) filter.Filter {
 	f, err := filter.NewIncludeExcludeFilter(include, exclude)
 	if err != nil {
 		panic(fmt.Sprintf("Include/exclude filters are invalid: %v", err))
@@ -280,7 +282,7 @@ func newFilterOrPanic(include []string, exclude []string) filter.Filter {
 	return f
 }
 
-func isSimple(include []string, exclude []string) bool {
+func isSimple(include, exclude []string) bool {
 	if len(exclude) > 0 || len(include) == 0 {
 		return false
 	}
@@ -311,7 +313,7 @@ func (e *Endpoint) startDiscovery(ctx context.Context) {
 	}()
 }
 
-func (e *Endpoint) initalDiscovery(ctx context.Context) {
+func (e *Endpoint) initialDiscovery(ctx context.Context) {
 	err := e.discover(ctx)
 	if err != nil && !errors.Is(err, context.Canceled) {
 		e.log.Errorf("Discovery for %s: %s", e.URL.Host, err.Error())
@@ -347,7 +349,7 @@ func (e *Endpoint) init(ctx context.Context) error {
 
 	if time.Duration(e.Parent.ObjectDiscoveryInterval) > 0 {
 		e.Parent.Log.Debug("Running initial discovery")
-		e.initalDiscovery(ctx)
+		e.initialDiscovery(ctx)
 	}
 	e.initialized = true
 	return nil
@@ -645,7 +647,9 @@ func getDatacenters(ctx context.Context, e *Endpoint, resourceFilter *ResourceFi
 		return nil, err
 	}
 	m := make(objectMap, len(resources))
-	for _, r := range resources {
+	for i := range resources {
+		r := &resources[i]
+
 		m[r.ExtensibleManagedObject.Reference().Value] = &objectRef{
 			name:         r.Name,
 			ref:          r.ExtensibleManagedObject.Reference(),
@@ -667,7 +671,9 @@ func getClusters(ctx context.Context, e *Endpoint, resourceFilter *ResourceFilte
 	}
 	cache := make(map[string]*types.ManagedObjectReference)
 	m := make(objectMap, len(resources))
-	for _, r := range resources {
+	for i := range resources {
+		r := &resources[i]
+
 		// Wrap in a function to make defer work correctly.
 		err := func() error {
 			// We're not interested in the immediate parent (a folder), but the data center.
@@ -716,7 +722,9 @@ func getResourcePools(ctx context.Context, e *Endpoint, resourceFilter *Resource
 		return nil, err
 	}
 	m := make(objectMap)
-	for _, r := range resources {
+	for i := range resources {
+		r := &resources[i]
+
 		m[r.ExtensibleManagedObject.Reference().Value] = &objectRef{
 			name:         r.Name,
 			ref:          r.ExtensibleManagedObject.Reference(),
@@ -728,13 +736,13 @@ func getResourcePools(ctx context.Context, e *Endpoint, resourceFilter *Resource
 }
 
 func getResourcePoolName(rp types.ManagedObjectReference, rps objectMap) string {
-	//Loop through the Resource Pools objectmap to find the corresponding one
+	// Loop through the Resource Pools objectmap to find the corresponding one
 	for _, r := range rps {
 		if r.ref == rp {
 			return r.name
 		}
 	}
-	return "Resources" //Default value
+	return "Resources" // Default value
 }
 
 // noinspection GoUnusedParameter
@@ -745,7 +753,9 @@ func getHosts(ctx context.Context, e *Endpoint, resourceFilter *ResourceFilter) 
 		return nil, err
 	}
 	m := make(objectMap)
-	for _, r := range resources {
+	for i := range resources {
+		r := &resources[i]
+
 		m[r.ExtensibleManagedObject.Reference().Value] = &objectRef{
 			name:         r.Name,
 			ref:          r.ExtensibleManagedObject.Reference(),
@@ -769,7 +779,7 @@ func getVMs(ctx context.Context, e *Endpoint, resourceFilter *ResourceFilter) (o
 	if err != nil {
 		return nil, err
 	}
-	//Create a ResourcePool Filter and get the list of Resource Pools
+	// Create a ResourcePool Filter and get the list of Resource Pools
 	rprf := ResourceFilter{
 		finder:       &Finder{client},
 		resType:      "ResourcePool",
@@ -779,7 +789,9 @@ func getVMs(ctx context.Context, e *Endpoint, resourceFilter *ResourceFilter) (o
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range resources {
+	for i := range resources {
+		r := &resources[i]
+
 		if r.Runtime.PowerState != "poweredOn" {
 			continue
 		}
@@ -830,8 +842,12 @@ func getVMs(ctx context.Context, e *Endpoint, resourceFilter *ResourceFilter) (o
 		// Sometimes Config is unknown and returns a nil pointer
 		if r.Config != nil {
 			guest = cleanGuestID(r.Config.GuestId)
+			if r.Guest.GuestId != "" {
+				guest = cleanGuestID(r.Guest.GuestId)
+			}
 			uuid = r.Config.Uuid
 		}
+
 		cvs := make(map[string]string)
 		if e.customAttrEnabled {
 			for _, cv := range r.Summary.CustomValue {
@@ -850,14 +866,16 @@ func getVMs(ctx context.Context, e *Endpoint, resourceFilter *ResourceFilter) (o
 			}
 		}
 		m[r.ExtensibleManagedObject.Reference().Value] = &objectRef{
-			name:         r.Name,
-			ref:          r.ExtensibleManagedObject.Reference(),
-			parentRef:    r.Runtime.Host,
-			guest:        guest,
-			altID:        uuid,
-			rpname:       rpname,
-			customValues: e.loadCustomAttributes(r.ManagedEntity),
-			lookup:       lookup,
+			name:              r.Name,
+			ref:               r.ExtensibleManagedObject.Reference(),
+			parentRef:         r.Runtime.Host,
+			guest:             guest,
+			memorySizeMB:      r.Summary.Config.MemorySizeMB,
+			memoryReservation: r.Summary.Config.MemoryReservation,
+			altID:             uuid,
+			rpname:            rpname,
+			customValues:      e.loadCustomAttributes(r.ManagedEntity),
+			lookup:            lookup,
 		}
 	}
 	return m, nil
@@ -872,7 +890,9 @@ func getDatastores(ctx context.Context, e *Endpoint, resourceFilter *ResourceFil
 		return nil, err
 	}
 	m := make(objectMap)
-	for _, r := range resources {
+	for i := range resources {
+		r := &resources[i]
+
 		lunID := ""
 		if r.Info != nil {
 			info := r.Info.GetDatastoreInfo()
@@ -893,7 +913,7 @@ func getDatastores(ctx context.Context, e *Endpoint, resourceFilter *ResourceFil
 
 func (e *Endpoint) loadCustomAttributes(entity mo.ManagedEntity) map[string]string {
 	if !e.customAttrEnabled {
-		return map[string]string{}
+		return make(map[string]string)
 	}
 	cvs := make(map[string]string)
 	for _, v := range entity.CustomValue {
@@ -983,7 +1003,7 @@ func submitChunkJob(ctx context.Context, te *ThrottledExecutor, job queryJob, pq
 	})
 }
 
-func (e *Endpoint) chunkify(ctx context.Context, res *resourceKind, now time.Time, latest time.Time, job queryJob) {
+func (e *Endpoint) chunkify(ctx context.Context, res *resourceKind, now, latest time.Time, job queryJob) {
 	te := NewThrottledExecutor(e.Parent.CollectConcurrency)
 	maxMetrics := e.Parent.MaxQueryMetrics
 	if maxMetrics < 1 {
@@ -1015,7 +1035,11 @@ func (e *Endpoint) chunkify(ctx context.Context, res *resourceKind, now time.Tim
 			}
 
 			if !start.Truncate(time.Second).Before(now.Truncate(time.Second)) {
-				e.log.Debugf("Start >= end (rounded to seconds): %s > %s", start, now)
+				// this happens when the hiwater mark was estimated using a larger estInterval than is currently used
+				// the estInterval is reset to 1m in case of some errors
+				// there are no new metrics to be expected here and querying this gets us an error, so: skip!
+				e.log.Debugf("Start >= end (rounded to seconds): %s > %s. Skipping!", start, now)
+				continue
 			}
 
 			// Create bucket if we don't already have it
@@ -1249,6 +1273,7 @@ func (e *Endpoint) collectChunk(
 
 			nValues := 0
 			alignedInfo, alignedValues := e.alignSamples(em.SampleInfo, v.Value, interval)
+			globalFields := e.populateGlobalFields(objectRef, resourceType, prefix)
 
 			for idx, sample := range alignedInfo {
 				// According to the docs, SampleInfo and Value should have the same length, but we've seen corrupted
@@ -1268,7 +1293,11 @@ func (e *Endpoint) collectChunk(
 				bKey := mn + " " + v.Instance + " " + strconv.FormatInt(ts.UnixNano(), 10)
 				bucket, found := buckets[bKey]
 				if !found {
-					bucket = metricEntry{name: mn, ts: ts, fields: make(map[string]interface{}), tags: t}
+					fields := make(map[string]interface{})
+					for k, v := range globalFields {
+						fields[k] = v
+					}
+					bucket = metricEntry{name: mn, ts: ts, fields: fields, tags: t}
 					buckets[bKey] = bucket
 				}
 
@@ -1395,7 +1424,20 @@ func (e *Endpoint) populateTags(objectRef *objectRef, resourceType string, resou
 	}
 }
 
-func (e *Endpoint) makeMetricIdentifier(prefix, metric string) (metricName string, fieldName string) {
+func (e *Endpoint) populateGlobalFields(objectRef *objectRef, resourceType, prefix string) map[string]interface{} {
+	globalFields := make(map[string]interface{})
+	if resourceType == "vm" && objectRef.memorySizeMB != 0 {
+		_, fieldName := e.makeMetricIdentifier(prefix, "memorySizeMB")
+		globalFields[fieldName] = strconv.Itoa(int(objectRef.memorySizeMB))
+	}
+	if resourceType == "vm" && objectRef.memoryReservation != 0 {
+		_, fieldName := e.makeMetricIdentifier(prefix, "memoryReservation")
+		globalFields[fieldName] = strconv.Itoa(int(objectRef.memoryReservation))
+	}
+	return globalFields
+}
+
+func (e *Endpoint) makeMetricIdentifier(prefix, metric string) (metricName, fieldName string) {
 	parts := strings.Split(metric, ".")
 	if len(parts) == 1 {
 		return prefix, parts[0]

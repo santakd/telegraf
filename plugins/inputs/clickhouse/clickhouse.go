@@ -26,26 +26,6 @@ var sampleConfig string
 
 var defaultTimeout = 5 * time.Second
 
-type connect struct {
-	Cluster  string `json:"cluster"`
-	ShardNum int    `json:"shard_num"`
-	Hostname string `json:"host_name"`
-	url      *url.URL
-}
-
-func init() {
-	inputs.Add("clickhouse", func() telegraf.Input {
-		return &ClickHouse{
-			AutoDiscovery: true,
-			ClientConfig: tls.ClientConfig{
-				InsecureSkipVerify: false,
-			},
-			Timeout: config.Duration(defaultTimeout),
-		}
-	})
-}
-
-// ClickHouse Telegraf Input Plugin
 type ClickHouse struct {
 	Username       string          `toml:"username"`
 	Password       string          `toml:"password"`
@@ -54,12 +34,34 @@ type ClickHouse struct {
 	ClusterInclude []string        `toml:"cluster_include"`
 	ClusterExclude []string        `toml:"cluster_exclude"`
 	Timeout        config.Duration `toml:"timeout"`
-	HTTPClient     http.Client
+	Variant        string          `toml:"variant"`
+
+	HTTPClient http.Client
 	tls.ClientConfig
+}
+
+type connect struct {
+	Cluster  string `json:"cluster"`
+	ShardNum int    `json:"shard_num"`
+	Hostname string `json:"host_name"`
+	url      *url.URL
 }
 
 func (*ClickHouse) SampleConfig() string {
 	return sampleConfig
+}
+
+func (ch *ClickHouse) Init() error {
+	switch ch.Variant {
+	case "":
+		ch.Variant = "self-hosted"
+	case "self-hosted", "managed":
+		// valid options
+	default:
+		return fmt.Errorf("unknown variant %q", ch.Variant)
+	}
+
+	return nil
 }
 
 // Start ClickHouse input service
@@ -130,7 +132,6 @@ func (ch *ClickHouse) Gather(acc telegraf.Accumulator) (err error) {
 	for i := range connects {
 		metricsFuncs := []func(acc telegraf.Accumulator, conn *connect) error{
 			ch.tables,
-			ch.zookeeper,
 			ch.replicationQueue,
 			ch.detachedParts,
 			ch.dictionaries,
@@ -138,6 +139,12 @@ func (ch *ClickHouse) Gather(acc telegraf.Accumulator) (err error) {
 			ch.disks,
 			ch.processes,
 			ch.textLog,
+		}
+
+		// Managed instances on Clickhouse Cloud does not give a user
+		// permissions to the zookeeper table
+		if ch.Variant != "managed" {
+			metricsFuncs = append(metricsFuncs, ch.zookeeper)
 		}
 
 		for _, metricFunc := range metricsFuncs {
@@ -509,7 +516,10 @@ func (ch *ClickHouse) execQuery(address *url.URL, query string, i interface{}) e
 	q := address.Query()
 	q.Set("query", query+" FORMAT JSON")
 	address.RawQuery = q.Encode()
-	req, _ := http.NewRequest("GET", address.String(), nil)
+	req, err := http.NewRequest("GET", address.String(), nil)
+	if err != nil {
+		return err
+	}
 	if ch.Username != "" {
 		req.Header.Add("X-ClickHouse-User", ch.Username)
 	}
@@ -522,6 +532,7 @@ func (ch *ClickHouse) execQuery(address *url.URL, query string, i interface{}) e
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
+		//nolint:errcheck // reading body for error reporting
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 200))
 		return &clickhouseError{
 			StatusCode: resp.StatusCode,
@@ -614,3 +625,15 @@ var commonMetricsIsFloat = map[string]bool{
 }
 
 var _ telegraf.ServiceInput = &ClickHouse{}
+
+func init() {
+	inputs.Add("clickhouse", func() telegraf.Input {
+		return &ClickHouse{
+			AutoDiscovery: true,
+			ClientConfig: tls.ClientConfig{
+				InsecureSkipVerify: false,
+			},
+			Timeout: config.Duration(defaultTimeout),
+		}
+	})
+}

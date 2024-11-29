@@ -12,7 +12,7 @@ import (
 
 func SMTPCTL(output string) func(string, config.Duration, bool) (*bytes.Buffer, error) {
 	return func(string, config.Duration, bool) (*bytes.Buffer, error) {
-		return bytes.NewBuffer([]byte(output)), nil
+		return bytes.NewBufferString(output), nil
 	}
 }
 
@@ -25,9 +25,9 @@ func TestFilterSomeStats(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, acc.HasMeasurement("opensmtpd"))
-	require.Equal(t, acc.NMetrics(), uint64(1))
+	require.Equal(t, uint64(1), acc.NMetrics())
 
-	require.Equal(t, acc.NFields(), 36)
+	require.Equal(t, 36, acc.NFields())
 	acc.AssertContainsFields(t, "opensmtpd", parsedFullOutput)
 }
 

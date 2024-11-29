@@ -7,12 +7,16 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/influxdata/telegraf"
 	"github.com/influxdata/telegraf/config"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
+
+//go:embed sample.conf
+var sampleConfig string
 
 const (
 	// plugin name. Exposed with all metrics
@@ -37,15 +41,12 @@ const (
 	defaultWaitForTelemetryTimeout = config.Duration(time.Second)
 )
 
-//go:embed sample.conf
-var sampleConfig string
-
 type Baseband struct {
 	// required params
 	SocketPath  string `toml:"socket_path"`
 	FileLogPath string `toml:"log_file_path"`
 
-	//optional params
+	// optional params
 	UnreachableSocketBehavior string          `toml:"unreachable_socket_behavior"`
 	SocketAccessTimeout       config.Duration `toml:"socket_access_timeout"`
 	WaitForTelemetryTimeout   config.Duration `toml:"wait_for_telemetry_timeout"`
@@ -59,15 +60,14 @@ func (b *Baseband) SampleConfig() string {
 	return sampleConfig
 }
 
-// Init performs one time setup of the plugin
 func (b *Baseband) Init() error {
 	if b.SocketAccessTimeout < 0 {
-		return fmt.Errorf("socket_access_timeout should be positive number or equal to 0 (to disable timeouts)")
+		return errors.New("socket_access_timeout should be positive number or equal to 0 (to disable timeouts)")
 	}
 
 	waitForTelemetryDuration := time.Duration(b.WaitForTelemetryTimeout)
 	if waitForTelemetryDuration < 50*time.Millisecond {
-		return fmt.Errorf("wait_for_telemetry_timeout should be equal or larger than 50ms")
+		return errors.New("wait_for_telemetry_timeout should be equal or larger than 50ms")
 	}
 
 	// Filling default values
@@ -162,7 +162,7 @@ func (b *Baseband) gatherVFMetric(acc telegraf.Accumulator, metricName string) e
 			tags := map[string]string{
 				"operation": metric.operationName,
 				"metric":    metricNameToTagName(metricName),
-				"vf":        fmt.Sprintf("%v", i),
+				"vf":        strconv.Itoa(i),
 			}
 			acc.AddGauge(pluginName, fields, tags)
 		}
@@ -189,7 +189,7 @@ func (b *Baseband) gatherEngineMetric(acc telegraf.Accumulator, metricName strin
 			tags := map[string]string{
 				"operation": metric.operationName,
 				"metric":    metricNameToTagName(metricName),
-				"engine":    fmt.Sprintf("%v", i),
+				"engine":    strconv.Itoa(i),
 			}
 			acc.AddGauge(pluginName, fields, tags)
 		}

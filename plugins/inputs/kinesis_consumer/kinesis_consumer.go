@@ -7,6 +7,7 @@ import (
 	"compress/zlib"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -14,33 +15,42 @@ import (
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
 	"github.com/aws/aws-sdk-go-v2/service/kinesis"
+	"github.com/aws/smithy-go/logging"
 	consumer "github.com/harlow/kinesis-consumer"
 	"github.com/harlow/kinesis-consumer/store/ddb"
 
 	"github.com/influxdata/telegraf"
-	internalaws "github.com/influxdata/telegraf/plugins/common/aws"
+	"github.com/influxdata/telegraf/internal"
+	common_aws "github.com/influxdata/telegraf/plugins/common/aws"
 	"github.com/influxdata/telegraf/plugins/inputs"
 )
 
 //go:embed sample.conf
 var sampleConfig string
 
-type (
-	DynamoDB struct {
-		AppName   string `toml:"app_name"`
-		TableName string `toml:"table_name"`
-	}
+var (
+	once sync.Once
+	// this is the largest sequence number allowed - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_SequenceNumberRange.html
+	maxSeq = strToBint(strings.Repeat("9", 129))
+	negOne *big.Int
+)
 
+const (
+	defaultMaxUndeliveredMessages = 1000
+)
+
+type (
 	KinesisConsumer struct {
 		StreamName             string    `toml:"streamname"`
 		ShardIteratorType      string    `toml:"shard_iterator_type"`
-		DynamoDB               *DynamoDB `toml:"checkpoint_dynamodb"`
+		DynamoDB               *dynamoDB `toml:"checkpoint_dynamodb"`
 		MaxUndeliveredMessages int       `toml:"max_undelivered_messages"`
 		ContentEncoding        string    `toml:"content_encoding"`
 
-		Log telegraf.Logger
+		Log telegraf.Logger `toml:"-"`
 
 		cons   *consumer.Consumer
 		parser telegraf.Parser
@@ -59,7 +69,12 @@ type (
 
 		lastSeqNum *big.Int
 
-		internalaws.CredentialConfig
+		common_aws.CredentialConfig
+	}
+
+	dynamoDB struct {
+		AppName   string `toml:"app_name"`
+		TableName string `toml:"table_name"`
 	}
 
 	checkpoint struct {
@@ -68,21 +83,59 @@ type (
 	}
 )
 
-const (
-	defaultMaxUndeliveredMessages = 1000
-)
-
 type processContent func([]byte) ([]byte, error)
-
-// this is the largest sequence number allowed - https://docs.aws.amazon.com/kinesis/latest/APIReference/API_SequenceNumberRange.html
-var maxSeq = strToBint(strings.Repeat("9", 129))
 
 func (*KinesisConsumer) SampleConfig() string {
 	return sampleConfig
 }
 
+func (k *KinesisConsumer) Init() error {
+	return k.configureProcessContentEncodingFunc()
+}
+
 func (k *KinesisConsumer) SetParser(parser telegraf.Parser) {
 	k.parser = parser
+}
+
+func (k *KinesisConsumer) Start(ac telegraf.Accumulator) error {
+	err := k.connect(ac)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (k *KinesisConsumer) Gather(acc telegraf.Accumulator) error {
+	if k.cons == nil {
+		return k.connect(acc)
+	}
+	k.lastSeqNum = maxSeq
+
+	return nil
+}
+
+func (k *KinesisConsumer) Stop() {
+	k.cancel()
+	k.wg.Wait()
+}
+
+// GetCheckpoint wraps the checkpoint's GetCheckpoint function (called by consumer library)
+func (k *KinesisConsumer) GetCheckpoint(streamName, shardID string) (string, error) {
+	return k.checkpoint.GetCheckpoint(streamName, shardID)
+}
+
+// SetCheckpoint wraps the checkpoint's SetCheckpoint function (called by consumer library)
+func (k *KinesisConsumer) SetCheckpoint(streamName, shardID, sequenceNumber string) error {
+	if sequenceNumber == "" {
+		return errors.New("sequence number should not be empty")
+	}
+
+	k.checkpointTex.Lock()
+	k.checkpoints[sequenceNumber] = checkpoint{streamName: streamName, shardID: shardID}
+	k.checkpointTex.Unlock()
+
+	return nil
 }
 
 func (k *KinesisConsumer) connect(ac telegraf.Accumulator) error {
@@ -90,6 +143,14 @@ func (k *KinesisConsumer) connect(ac telegraf.Accumulator) error {
 	if err != nil {
 		return err
 	}
+
+	if k.EndpointURL != "" {
+		cfg.BaseEndpoint = &k.EndpointURL
+	}
+
+	logWrapper := &telegrafLoggerWrapper{k.Log}
+	cfg.Logger = logWrapper
+	cfg.ClientLogMode = aws.LogRetries
 	client := kinesis.NewFromConfig(cfg)
 
 	k.checkpoint = &noopStore{}
@@ -111,6 +172,7 @@ func (k *KinesisConsumer) connect(ac telegraf.Accumulator) error {
 		consumer.WithClient(client),
 		consumer.WithShardIteratorType(k.ShardIteratorType),
 		consumer.WithStore(k),
+		consumer.WithLogger(logWrapper),
 	)
 	if err != nil {
 		return err
@@ -160,15 +222,6 @@ func (k *KinesisConsumer) connect(ac telegraf.Accumulator) error {
 	return nil
 }
 
-func (k *KinesisConsumer) Start(ac telegraf.Accumulator) error {
-	err := k.connect(ac)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func (k *KinesisConsumer) onMessage(acc telegraf.TrackingAccumulator, r *consumer.Record) error {
 	data, err := k.processContentEncodingFunc(r.Data)
 	if err != nil {
@@ -177,6 +230,12 @@ func (k *KinesisConsumer) onMessage(acc telegraf.TrackingAccumulator, r *consume
 	metrics, err := k.parser.Parse(data)
 	if err != nil {
 		return err
+	}
+
+	if len(metrics) == 0 {
+		once.Do(func() {
+			k.Log.Debug(internal.NoMetricsCreatedMsg)
+		})
 	}
 
 	k.recordsTex.Lock()
@@ -229,48 +288,6 @@ func (k *KinesisConsumer) onDelivery(ctx context.Context) {
 	}
 }
 
-var negOne *big.Int
-
-func strToBint(s string) *big.Int {
-	n, ok := new(big.Int).SetString(s, 10)
-	if !ok {
-		return negOne
-	}
-	return n
-}
-
-func (k *KinesisConsumer) Stop() {
-	k.cancel()
-	k.wg.Wait()
-}
-
-func (k *KinesisConsumer) Gather(acc telegraf.Accumulator) error {
-	if k.cons == nil {
-		return k.connect(acc)
-	}
-	k.lastSeqNum = maxSeq
-
-	return nil
-}
-
-// Get wraps the checkpoint's GetCheckpoint function (called by consumer library)
-func (k *KinesisConsumer) GetCheckpoint(streamName, shardID string) (string, error) {
-	return k.checkpoint.GetCheckpoint(streamName, shardID)
-}
-
-// Set wraps the checkpoint's SetCheckpoint function (called by consumer library)
-func (k *KinesisConsumer) SetCheckpoint(streamName, shardID, sequenceNumber string) error {
-	if sequenceNumber == "" {
-		return fmt.Errorf("sequence number should not be empty")
-	}
-
-	k.checkpointTex.Lock()
-	k.checkpoints[sequenceNumber] = checkpoint{streamName: streamName, shardID: shardID}
-	k.checkpointTex.Unlock()
-
-	return nil
-}
-
 func processGzip(data []byte) ([]byte, error) {
 	zipData, err := gzip.NewReader(bytes.NewReader(data))
 	if err != nil {
@@ -293,6 +310,14 @@ func processNoOp(data []byte) ([]byte, error) {
 	return data, nil
 }
 
+func strToBint(s string) *big.Int {
+	n, ok := new(big.Int).SetString(s, 10)
+	if !ok {
+		return negOne
+	}
+	return n
+}
+
 func (k *KinesisConsumer) configureProcessContentEncodingFunc() error {
 	switch k.ContentEncoding {
 	case "gzip":
@@ -307,14 +332,31 @@ func (k *KinesisConsumer) configureProcessContentEncodingFunc() error {
 	return nil
 }
 
-func (k *KinesisConsumer) Init() error {
-	return k.configureProcessContentEncodingFunc()
+type telegrafLoggerWrapper struct {
+	telegraf.Logger
 }
 
+func (t *telegrafLoggerWrapper) Log(args ...interface{}) {
+	t.Trace(args...)
+}
+
+func (t *telegrafLoggerWrapper) Logf(classification logging.Classification, format string, v ...interface{}) {
+	switch classification {
+	case logging.Debug:
+		format = "DEBUG " + format
+	case logging.Warn:
+		format = "WARN" + format
+	default:
+		format = "INFO " + format
+	}
+	t.Logger.Tracef(format, v...)
+}
+
+// noopStore implements the storage interface with discard
 type noopStore struct{}
 
-func (n noopStore) SetCheckpoint(string, string, string) error   { return nil }
-func (n noopStore) GetCheckpoint(string, string) (string, error) { return "", nil }
+func (n noopStore) SetCheckpoint(_, _, _ string) error        { return nil }
+func (n noopStore) GetCheckpoint(_, _ string) (string, error) { return "", nil }
 
 func init() {
 	negOne, _ = new(big.Int).SetString("-1", 10)
